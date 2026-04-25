@@ -4,7 +4,7 @@ A mobile-first, server-authoritative BullShit Poker game built with React, TypeS
 
 Live deployment:
 
-https://bullshit-poker.saichallagulla.workers.dev
+https://bullshit-poker.every-day.workers.dev/
 
 ## Features
 
