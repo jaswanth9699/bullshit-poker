@@ -56,9 +56,9 @@ export type AddBotInput = {
   identity: RoomIdentityProvider;
 };
 
-export type RemoveBotInput = {
+export type RemovePlayerInput = {
   hostPlayerId: string;
-  botPlayerId: string;
+  targetPlayerId: string;
   now: number;
 };
 
@@ -85,11 +85,14 @@ export type AdvanceNextRoundInput = {
   rng: Rng;
 };
 
-function lifecycleError(state: GameState | undefined, code: ServerErrorCode): LifecycleResult {
+function lifecycleError(
+  state: GameState | undefined,
+  code: ServerErrorCode,
+): LifecycleResult {
   return {
     ok: false,
     code,
-    latestStateRevision: state?.stateRevision ?? 0
+    latestStateRevision: state?.stateRevision ?? 0,
   };
 }
 
@@ -110,7 +113,7 @@ function createPlayer(params: {
     eliminated: false,
     connected: true,
     isBot: params.isBot ?? false,
-    roundCards: []
+    roundCards: [],
   };
 }
 
@@ -118,7 +121,7 @@ function createCredential(
   identity: RoomIdentityProvider,
   playerId: string,
   normalizedName: string,
-  pin: string
+  pin: string,
 ): { credential: PlayerCredential; reconnectToken: string } {
   const reconnectToken = identity.createReconnectToken();
   return {
@@ -127,8 +130,8 @@ function createCredential(
       playerId,
       normalizedName,
       pinVerifier: identity.createPinVerifier(pin, playerId),
-      reconnectTokenHash: identity.hashReconnectToken(reconnectToken, playerId)
-    }
+      reconnectTokenHash: identity.hashReconnectToken(reconnectToken, playerId),
+    },
   };
 }
 
@@ -136,8 +139,13 @@ function credentials(state: GameState): PlayerCredential[] {
   return state.playerCredentials ?? [];
 }
 
-function playerCredential(state: GameState, playerId: string): PlayerCredential | undefined {
-  return credentials(state).find((credential) => credential.playerId === playerId);
+function playerCredential(
+  state: GameState,
+  playerId: string,
+): PlayerCredential | undefined {
+  return credentials(state).find(
+    (credential) => credential.playerId === playerId,
+  );
 }
 
 function nextSeatIndex(players: readonly PlayerState[]): number {
@@ -146,7 +154,9 @@ function nextSeatIndex(players: readonly PlayerState[]): number {
 }
 
 function activePlayers(players: readonly PlayerState[]): PlayerState[] {
-  return players.filter((player) => !player.eliminated && player.leftAt === undefined);
+  return players.filter(
+    (player) => !player.eliminated && player.leftAt === undefined,
+  );
 }
 
 function nextDefaultBotName(players: readonly PlayerState[]): string {
@@ -165,7 +175,10 @@ function winnerPlayerId(players: readonly PlayerState[]): string | undefined {
   return active.length === 1 ? active[0].id : undefined;
 }
 
-function dealRoundCards(players: readonly PlayerState[], deck: readonly Card[]): PlayerState[] {
+function dealRoundCards(
+  players: readonly PlayerState[],
+  deck: readonly Card[],
+): PlayerState[] {
   let cursor = 0;
 
   return players.map((player) => {
@@ -182,12 +195,17 @@ function dealRoundCards(players: readonly PlayerState[], deck: readonly Card[]):
 
     return {
       ...player,
-      roundCards
+      roundCards,
     };
   });
 }
 
-function turnId(roomId: string, roundNumber: number, playerId: string, sequence: number): string {
+function turnId(
+  roomId: string,
+  roundNumber: number,
+  playerId: string,
+  sequence: number,
+): string {
   return `${roomId}:round:${roundNumber}:turn:${playerId}:${sequence}`;
 }
 
@@ -202,12 +220,17 @@ export function createRoomWithHost(input: CreateRoomInput): LifecycleResult {
   }
 
   const playerId = input.identity.createPlayerId();
-  const { credential, reconnectToken } = createCredential(input.identity, playerId, normalizedName, input.pin);
+  const { credential, reconnectToken } = createCredential(
+    input.identity,
+    playerId,
+    normalizedName,
+    input.pin,
+  );
   const hostPlayer = createPlayer({
     id: playerId,
     name: input.hostName.trim(),
     normalizedName,
-    seatIndex: 0
+    seatIndex: 0,
   });
 
   const state: GameState = {
@@ -220,7 +243,7 @@ export function createRoomWithHost(input: CreateRoomInput): LifecycleResult {
     playerCredentials: [credential],
     roundNumber: 0,
     claimHistory: [],
-    turnDurationMs: input.turnDurationMs ?? DEFAULT_TURN_DURATION_MS
+    turnDurationMs: input.turnDurationMs ?? DEFAULT_TURN_DURATION_MS,
   };
 
   return {
@@ -228,11 +251,14 @@ export function createRoomWithHost(input: CreateRoomInput): LifecycleResult {
     state,
     playerId,
     reconnectToken,
-    reclaimed: false
+    reclaimed: false,
   };
 }
 
-export function joinRoom(state: GameState, input: JoinRoomInput): LifecycleResult {
+export function joinRoom(
+  state: GameState,
+  input: JoinRoomInput,
+): LifecycleResult {
   if (state.phase !== "Lobby") {
     return lifecycleError(state, "GAME_ALREADY_STARTED");
   }
@@ -245,27 +271,45 @@ export function joinRoom(state: GameState, input: JoinRoomInput): LifecycleResul
     return lifecycleError(state, "NAME_TAKEN");
   }
 
-  const existingPlayer = state.players.find((player) => player.normalizedName === normalizedName);
+  const existingPlayer = state.players.find(
+    (player) => player.normalizedName === normalizedName,
+  );
   if (existingPlayer) {
-    const credential = credentials(state).find((candidate) => candidate.playerId === existingPlayer.id);
-    if (!credential || !input.identity.verifyPin(input.pin, credential.pinVerifier, existingPlayer.id)) {
+    const credential = credentials(state).find(
+      (candidate) => candidate.playerId === existingPlayer.id,
+    );
+    if (
+      !credential ||
+      !input.identity.verifyPin(
+        input.pin,
+        credential.pinVerifier,
+        existingPlayer.id,
+      )
+    ) {
       return lifecycleError(state, "PIN_MISMATCH");
     }
 
     const reconnectToken = input.identity.createReconnectToken();
     const updatedCredential = {
       ...credential,
-      reconnectTokenHash: input.identity.hashReconnectToken(reconnectToken, existingPlayer.id)
+      reconnectTokenHash: input.identity.hashReconnectToken(
+        reconnectToken,
+        existingPlayer.id,
+      ),
     };
     const updatedState: GameState = {
       ...state,
       stateRevision: state.stateRevision + 1,
       players: state.players.map((player) =>
-        player.id === existingPlayer.id ? { ...player, connected: true, leftAt: undefined } : player
+        player.id === existingPlayer.id
+          ? { ...player, connected: true, leftAt: undefined }
+          : player,
       ),
       playerCredentials: credentials(state).map((candidate) =>
-        candidate.playerId === existingPlayer.id ? updatedCredential : candidate
-      )
+        candidate.playerId === existingPlayer.id
+          ? updatedCredential
+          : candidate,
+      ),
     };
 
     return {
@@ -273,7 +317,7 @@ export function joinRoom(state: GameState, input: JoinRoomInput): LifecycleResul
       state: updatedState,
       playerId: existingPlayer.id,
       reconnectToken,
-      reclaimed: true
+      reclaimed: true,
     };
   }
 
@@ -282,19 +326,24 @@ export function joinRoom(state: GameState, input: JoinRoomInput): LifecycleResul
   }
 
   const playerId = input.identity.createPlayerId();
-  const { credential, reconnectToken } = createCredential(input.identity, playerId, normalizedName, input.pin);
+  const { credential, reconnectToken } = createCredential(
+    input.identity,
+    playerId,
+    normalizedName,
+    input.pin,
+  );
   const newPlayer = createPlayer({
     id: playerId,
     name: input.name.trim(),
     normalizedName,
-    seatIndex: nextSeatIndex(state.players)
+    seatIndex: nextSeatIndex(state.players),
   });
 
   const updatedState: GameState = {
     ...state,
     stateRevision: state.stateRevision + 1,
     players: [...state.players, newPlayer],
-    playerCredentials: [...credentials(state), credential]
+    playerCredentials: [...credentials(state), credential],
   };
 
   return {
@@ -302,11 +351,14 @@ export function joinRoom(state: GameState, input: JoinRoomInput): LifecycleResul
     state: updatedState,
     playerId,
     reconnectToken,
-    reclaimed: false
+    reclaimed: false,
   };
 }
 
-export function addBotToRoom(state: GameState, input: AddBotInput): LifecycleResult {
+export function addBotToRoom(
+  state: GameState,
+  input: AddBotInput,
+): LifecycleResult {
   if (state.phase !== "Lobby") {
     return lifecycleError(state, "GAME_ALREADY_STARTED");
   }
@@ -319,7 +371,10 @@ export function addBotToRoom(state: GameState, input: AddBotInput): LifecycleRes
 
   const botName = input.name?.trim() || nextDefaultBotName(state.players);
   const normalizedName = normalizeDisplayName(botName);
-  if (!normalizedName || state.players.some((player) => player.normalizedName === normalizedName)) {
+  if (
+    !normalizedName ||
+    state.players.some((player) => player.normalizedName === normalizedName)
+  ) {
     return lifecycleError(state, "NAME_TAKEN");
   }
 
@@ -328,7 +383,7 @@ export function addBotToRoom(state: GameState, input: AddBotInput): LifecycleRes
     name: botName,
     normalizedName,
     seatIndex: nextSeatIndex(state.players),
-    isBot: true
+    isBot: true,
   });
 
   return {
@@ -336,12 +391,15 @@ export function addBotToRoom(state: GameState, input: AddBotInput): LifecycleRes
     state: {
       ...state,
       stateRevision: state.stateRevision + 1,
-      players: [...state.players, bot]
-    }
+      players: [...state.players, bot],
+    },
   };
 }
 
-export function removeBotFromRoom(state: GameState, input: RemoveBotInput): LifecycleResult {
+export function removePlayerFromRoom(
+  state: GameState,
+  input: RemovePlayerInput,
+): LifecycleResult {
   if (state.phase !== "Lobby") {
     return lifecycleError(state, "GAME_ALREADY_STARTED");
   }
@@ -349,9 +407,15 @@ export function removeBotFromRoom(state: GameState, input: RemoveBotInput): Life
     return lifecycleError(state, "NOT_HOST");
   }
 
-  const bot = state.players.find((player) => player.id === input.botPlayerId && player.isBot);
-  if (!bot) {
-    return lifecycleError(state, "BOT_NOT_FOUND");
+  if (state.hostPlayerId === input.targetPlayerId) {
+    return lifecycleError(state, "CANNOT_REMOVE_HOST");
+  }
+
+  const target = state.players.find(
+    (player) => player.id === input.targetPlayerId,
+  );
+  if (!target) {
+    return lifecycleError(state, "PLAYER_NOT_FOUND");
   }
 
   return {
@@ -359,12 +423,37 @@ export function removeBotFromRoom(state: GameState, input: RemoveBotInput): Life
     state: {
       ...state,
       stateRevision: state.stateRevision + 1,
-      players: state.players.filter((player) => player.id !== input.botPlayerId)
-    }
+      players: state.players.filter(
+        (player) => player.id !== input.targetPlayerId,
+      ),
+      playerCredentials: credentials(state).filter(
+        (credential) => credential.playerId !== input.targetPlayerId,
+      ),
+    },
   };
 }
 
-export function startGame(state: GameState, input: StartGameInput): LifecycleResult {
+export function removeBotFromRoom(
+  state: GameState,
+  input: { hostPlayerId: string; botPlayerId: string; now: number },
+): LifecycleResult {
+  const bot = state.players.find(
+    (player) => player.id === input.botPlayerId && player.isBot,
+  );
+  if (!bot) {
+    return lifecycleError(state, "BOT_NOT_FOUND");
+  }
+  return removePlayerFromRoom(state, {
+    hostPlayerId: input.hostPlayerId,
+    targetPlayerId: input.botPlayerId,
+    now: input.now,
+  });
+}
+
+export function startGame(
+  state: GameState,
+  input: StartGameInput,
+): LifecycleResult {
   if (state.phase !== "Lobby") {
     return lifecycleError(state, "GAME_ALREADY_STARTED");
   }
@@ -377,16 +466,18 @@ export function startGame(state: GameState, input: StartGameInput): LifecycleRes
     return lifecycleError(state, "NOT_ENOUGH_PLAYERS");
   }
 
-  const startingPlayer = [...active].sort((left, right) => left.seatIndex - right.seatIndex)[0];
+  const startingPlayer = [...active].sort(
+    (left, right) => left.seatIndex - right.seatIndex,
+  )[0];
   const deck = shuffleDeck(createDeck(), input.rng);
   const players = dealRoundCards(
     state.players.map((player) => ({
       ...player,
       cardCount: 1,
       eliminated: false,
-      roundCards: []
+      roundCards: [],
     })),
-    deck
+    deck,
   );
 
   const roundNumber = 1;
@@ -405,21 +496,26 @@ export function startGame(state: GameState, input: StartGameInput): LifecycleRes
     turnStartedAt: input.now,
     turnExpiresAt: input.now + state.turnDurationMs,
     lastRoundResult: undefined,
-    winnerPlayerId: undefined
+    winnerPlayerId: undefined,
   };
 
   return {
     ok: true,
-    state: updatedState
+    state: updatedState,
   };
 }
 
-export function connectPlayer(state: GameState, input: ConnectPlayerInput): LifecycleResult {
+export function connectPlayer(
+  state: GameState,
+  input: ConnectPlayerInput,
+): LifecycleResult {
   if (state.phase === "Closed") {
     return lifecycleError(state, "ROOM_CLOSED");
   }
 
-  const player = state.players.find((candidate) => candidate.id === input.playerId);
+  const player = state.players.find(
+    (candidate) => candidate.id === input.playerId,
+  );
   if (!player) {
     return lifecycleError(state, "ROOM_NOT_FOUND");
   }
@@ -427,7 +523,8 @@ export function connectPlayer(state: GameState, input: ConnectPlayerInput): Life
   const credential = playerCredential(state, input.playerId);
   if (
     !credential ||
-    credential.reconnectTokenHash !== input.identity.hashReconnectToken(input.reconnectToken, input.playerId)
+    credential.reconnectTokenHash !==
+      input.identity.hashReconnectToken(input.reconnectToken, input.playerId)
   ) {
     return lifecycleError(state, "RECONNECT_TOKEN_INVALID");
   }
@@ -435,7 +532,7 @@ export function connectPlayer(state: GameState, input: ConnectPlayerInput): Life
   if (player.connected) {
     return {
       ok: true,
-      state
+      state,
     };
   }
 
@@ -445,18 +542,25 @@ export function connectPlayer(state: GameState, input: ConnectPlayerInput): Life
       ...state,
       stateRevision: state.stateRevision + 1,
       players: state.players.map((candidate) =>
-        candidate.id === input.playerId ? { ...candidate, connected: true } : candidate
-      )
-    }
+        candidate.id === input.playerId
+          ? { ...candidate, connected: true }
+          : candidate,
+      ),
+    },
   };
 }
 
-export function disconnectPlayer(state: GameState, input: DisconnectPlayerInput): LifecycleResult {
+export function disconnectPlayer(
+  state: GameState,
+  input: DisconnectPlayerInput,
+): LifecycleResult {
   if (state.phase === "Closed") {
     return lifecycleError(state, "ROOM_CLOSED");
   }
 
-  const player = state.players.find((candidate) => candidate.id === input.playerId);
+  const player = state.players.find(
+    (candidate) => candidate.id === input.playerId,
+  );
   if (!player) {
     return lifecycleError(state, "ROOM_NOT_FOUND");
   }
@@ -464,7 +568,7 @@ export function disconnectPlayer(state: GameState, input: DisconnectPlayerInput)
   if (!player.connected) {
     return {
       ok: true,
-      state
+      state,
     };
   }
 
@@ -474,13 +578,18 @@ export function disconnectPlayer(state: GameState, input: DisconnectPlayerInput)
       ...state,
       stateRevision: state.stateRevision + 1,
       players: state.players.map((candidate) =>
-        candidate.id === input.playerId ? { ...candidate, connected: false } : candidate
-      )
-    }
+        candidate.id === input.playerId
+          ? { ...candidate, connected: false }
+          : candidate,
+      ),
+    },
   };
 }
 
-export function advanceToNextRound(state: GameState, input: AdvanceNextRoundInput): LifecycleResult {
+export function advanceToNextRound(
+  state: GameState,
+  input: AdvanceNextRoundInput,
+): LifecycleResult {
   if (state.phase !== "ResolvingRound") {
     return lifecycleError(state, "ROUND_NOT_RESOLVED");
   }
@@ -488,7 +597,10 @@ export function advanceToNextRound(state: GameState, input: AdvanceNextRoundInpu
     return lifecycleError(state, "INTERNAL_ERROR");
   }
 
-  const nextStartingPlayerId = determineNextRoundStarter(state.players, state.startingPlayerId);
+  const nextStartingPlayerId = determineNextRoundStarter(
+    state.players,
+    state.startingPlayerId,
+  );
   if (!nextStartingPlayerId) {
     return {
       ok: true,
@@ -502,8 +614,8 @@ export function advanceToNextRound(state: GameState, input: AdvanceNextRoundInpu
         currentClaim: undefined,
         activeClaimWindow: undefined,
         turnStartedAt: undefined,
-        turnExpiresAt: undefined
-      }
+        turnExpiresAt: undefined,
+      },
     };
   }
 
@@ -512,9 +624,9 @@ export function advanceToNextRound(state: GameState, input: AdvanceNextRoundInpu
     players = dealRoundCards(
       state.players.map((player) => ({
         ...player,
-        roundCards: []
+        roundCards: [],
       })),
-      shuffleDeck(createDeck(), input.rng)
+      shuffleDeck(createDeck(), input.rng),
     );
   } catch {
     return lifecycleError(state, "INTERNAL_ERROR");
@@ -538,7 +650,7 @@ export function advanceToNextRound(state: GameState, input: AdvanceNextRoundInpu
       claimHistory: [],
       turnStartedAt: input.now,
       turnExpiresAt: input.now + state.turnDurationMs,
-      winnerPlayerId: undefined
-    }
+      winnerPlayerId: undefined,
+    },
   };
 }

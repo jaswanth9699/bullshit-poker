@@ -6,15 +6,24 @@ import {
   RoomAuthority,
   RoomSessionManager,
   type RoomSocketEvent,
-  type RoomSocketLike
+  type RoomSocketLike,
 } from "../../src/durable-objects/index.ts";
-import { createCard, type GameState, type PlayerState, type RoomIdentityProvider, type RoomServerMessage } from "../../src/shared/index.ts";
+import {
+  createCard,
+  type GameState,
+  type PlayerState,
+  type RoomIdentityProvider,
+  type RoomServerMessage,
+} from "../../src/shared/index.ts";
 
 class FakeSocket implements RoomSocketLike {
   accepted = false;
   closed?: { code?: number; reason?: string };
   readonly sent: string[] = [];
-  private readonly listeners = new Map<string, Array<(event: RoomSocketEvent) => void>>();
+  private readonly listeners = new Map<
+    string,
+    Array<(event: RoomSocketEvent) => void>
+  >();
 
   accept(): void {
     this.accepted = true;
@@ -28,7 +37,10 @@ class FakeSocket implements RoomSocketLike {
     this.closed = { code, reason };
   }
 
-  addEventListener(type: "message" | "close" | "error", listener: (event: RoomSocketEvent) => void): void {
+  addEventListener(
+    type: "message" | "close" | "error",
+    listener: (event: RoomSocketEvent) => void,
+  ): void {
     const listeners = this.listeners.get(type) ?? [];
     listeners.push(listener);
     this.listeners.set(type, listeners);
@@ -45,10 +57,13 @@ class FakeSocket implements RoomSocketLike {
   }
 
   lastMessageOfType<TType extends RoomServerMessage["type"]>(
-    type: TType
+    type: TType,
   ): Extract<RoomServerMessage, { type: TType }> | undefined {
     return this.messages()
-      .filter((message): message is Extract<RoomServerMessage, { type: TType }> => message.type === type)
+      .filter(
+        (message): message is Extract<RoomServerMessage, { type: TType }> =>
+          message.type === type,
+      )
       .at(-1);
   }
 
@@ -78,7 +93,7 @@ function identityProvider(): RoomIdentityProvider {
     },
     hashReconnectToken(token, playerId) {
       return `token:${playerId}:${token}`;
-    }
+    },
   };
 }
 
@@ -86,7 +101,7 @@ function sessionTestPlayer(
   id: string,
   seatIndex: number,
   cards: PlayerState["roundCards"],
-  options: Partial<PlayerState> = {}
+  options: Partial<PlayerState> = {},
 ): PlayerState {
   return {
     id,
@@ -99,7 +114,7 @@ function sessionTestPlayer(
     connected: true,
     isBot: false,
     roundCards: cards,
-    ...options
+    ...options,
   };
 }
 
@@ -119,16 +134,20 @@ function roomStateWithBot(params: {
     stateRevision: 5,
     hostPlayerId: "human",
     players: [
-      sessionTestPlayer("human", 0, params.humanCards ?? [createCard("2", "D")]),
-      sessionTestPlayer(botId, 1, params.botCards, { isBot: true })
+      sessionTestPlayer(
+        "human",
+        0,
+        params.humanCards ?? [createCard("2", "D")],
+      ),
+      sessionTestPlayer(botId, 1, params.botCards, { isBot: true }),
     ],
     playerCredentials: [
       {
         playerId: "human",
         normalizedName: "human",
         pinVerifier: "pin:human:1234",
-        reconnectTokenHash: "token:human:token-human"
-      }
+        reconnectTokenHash: "token:human:token-human",
+      },
     ],
     roundNumber: 1,
     startingPlayerId: "human",
@@ -139,7 +158,7 @@ function roomStateWithBot(params: {
     claimHistory: params.currentClaim ? [params.currentClaim] : [],
     turnStartedAt: 100,
     turnExpiresAt: 120100,
-    turnDurationMs: 120000
+    turnDurationMs: 120000,
   };
 }
 
@@ -153,12 +172,17 @@ async function startedRoom() {
     hostName: "Host",
     pin: "1234",
     now: 100,
-    identity
+    identity,
   });
   assert.equal(created.ok, true);
   if (!created.ok) throw new Error("create failed");
 
-  const joined = await authority.joinRoom({ name: "Friend", pin: "5678", now: 200, identity });
+  const joined = await authority.joinRoom({
+    name: "Friend",
+    pin: "5678",
+    now: 200,
+    identity,
+  });
   assert.equal(joined.ok, true);
   if (!joined.ok) throw new Error("join failed");
 
@@ -172,7 +196,7 @@ async function startedRoom() {
     hostPlayerId: created.playerId!,
     hostToken: created.reconnectToken!,
     friendPlayerId: joined.playerId!,
-    friendToken: joined.reconnectToken!
+    friendToken: joined.reconnectToken!,
   };
 }
 
@@ -186,7 +210,7 @@ async function lobbyRoom() {
     hostName: "Host",
     pin: "1234",
     now: 100,
-    identity
+    identity,
   });
   assert.equal(created.ok, true);
   if (!created.ok) throw new Error("create failed");
@@ -195,7 +219,7 @@ async function lobbyRoom() {
     authority,
     identity,
     hostPlayerId: created.playerId!,
-    hostToken: created.reconnectToken!
+    hostToken: created.reconnectToken!,
   };
 }
 
@@ -211,7 +235,7 @@ async function connectPlayer(params: {
     playerId: params.playerId,
     reconnectToken: params.reconnectToken,
     identity: params.identity,
-    now: 500
+    now: 500,
   });
   assert.equal(result.ok, true);
   if (!result.ok) throw new Error("connect failed");
@@ -227,11 +251,13 @@ test("RoomSessionManager accepts valid reconnect token and sends a private hand-
     socket,
     playerId: room.hostPlayerId,
     reconnectToken: room.hostToken,
-    identity: room.identity
+    identity: room.identity,
   });
 
   const state = await room.authority.getState();
-  const friendCardId = state!.players.find((player) => player.id === room.friendPlayerId)!.roundCards[0].id;
+  const friendCardId = state!.players.find(
+    (player) => player.id === room.friendPlayerId,
+  )!.roundCards[0].id;
   const accepted = socket.lastMessageOfType("SESSION_ACCEPTED");
   const serialized = JSON.stringify(accepted);
 
@@ -252,7 +278,7 @@ test("RoomSessionManager rejects invalid reconnect token before adding a session
     playerId: room.hostPlayerId,
     reconnectToken: "wrong-token",
     identity: room.identity,
-    now: 500
+    now: 500,
   });
 
   assert.equal(result.ok, false);
@@ -271,21 +297,25 @@ test("RoomSessionManager broadcasts accepted actions as sanitized per-player vie
     socket: hostSocket,
     playerId: room.hostPlayerId,
     reconnectToken: room.hostToken,
-    identity: room.identity
+    identity: room.identity,
   });
   await connectPlayer({
     manager,
     socket: friendSocket,
     playerId: room.friendPlayerId,
     reconnectToken: room.friendToken,
-    identity: room.identity
+    identity: room.identity,
   });
   hostSocket.clear();
   friendSocket.clear();
 
   const state = await room.authority.getState();
-  const hostCardId = state!.players.find((player) => player.id === room.hostPlayerId)!.roundCards[0].id;
-  const friendCardId = state!.players.find((player) => player.id === room.friendPlayerId)!.roundCards[0].id;
+  const hostCardId = state!.players.find(
+    (player) => player.id === room.hostPlayerId,
+  )!.roundCards[0].id;
+  const friendCardId = state!.players.find(
+    (player) => player.id === room.friendPlayerId,
+  )!.roundCards[0].id;
 
   await manager.handleSocketMessage(
     hostSessionId,
@@ -297,10 +327,10 @@ test("RoomSessionManager broadcasts accepted actions as sanitized per-player vie
         playerId: room.hostPlayerId,
         stateRevision: state!.stateRevision,
         turnId: state!.currentTurnId,
-        payload: { claim: { handType: "HIGH_CARD", primaryRank: "A" } }
-      }
+        payload: { claim: { handType: "HIGH_CARD", primaryRank: "A" } },
+      },
     }),
-    1_000
+    1_000,
   );
 
   const hostUpdate = hostSocket.lastMessageOfType("ROOM_UPDATED");
@@ -309,8 +339,14 @@ test("RoomSessionManager broadcasts accepted actions as sanitized per-player vie
 
   assert.equal(hostUpdate?.reason, "ACTION_ACCEPTED");
   assert.equal(hostUpdate?.view.currentClaim?.playerId, room.hostPlayerId);
-  assert.deepEqual(hostUpdate?.view.viewerCards.map((card) => card.id), [hostCardId]);
-  assert.deepEqual(friendUpdate?.view.viewerCards.map((card) => card.id), [friendCardId]);
+  assert.deepEqual(
+    hostUpdate?.view.viewerCards.map((card) => card.id),
+    [hostCardId],
+  );
+  assert.deepEqual(
+    friendUpdate?.view.viewerCards.map((card) => card.id),
+    [friendCardId],
+  );
   assert.equal(friendSerialized.includes(hostCardId), false);
   assert.equal(friendSerialized.includes("roundCards"), false);
 });
@@ -325,14 +361,14 @@ test("RoomSessionManager rejects playerId mismatch and stale post-resolution rac
     socket: hostSocket,
     playerId: room.hostPlayerId,
     reconnectToken: room.hostToken,
-    identity: room.identity
+    identity: room.identity,
   });
   const friendSessionId = await connectPlayer({
     manager,
     socket: friendSocket,
     playerId: room.friendPlayerId,
     reconnectToken: room.friendToken,
-    identity: room.identity
+    identity: room.identity,
   });
 
   const startState = await room.authority.getState();
@@ -346,12 +382,15 @@ test("RoomSessionManager rejects playerId mismatch and stale post-resolution rac
         playerId: room.friendPlayerId,
         stateRevision: startState!.stateRevision,
         turnId: startState!.currentTurnId,
-        payload: { claim: { handType: "HIGH_CARD", primaryRank: "A" } }
-      }
+        payload: { claim: { handType: "HIGH_CARD", primaryRank: "A" } },
+      },
     }),
-    1_000
+    1_000,
   );
-  assert.equal(hostSocket.lastMessageOfType("ACTION_REJECTED")?.code, "PLAYER_SESSION_MISMATCH");
+  assert.equal(
+    hostSocket.lastMessageOfType("ACTION_REJECTED")?.code,
+    "PLAYER_SESSION_MISMATCH",
+  );
 
   await manager.handleSocketMessage(
     hostSessionId,
@@ -363,10 +402,10 @@ test("RoomSessionManager rejects playerId mismatch and stale post-resolution rac
         playerId: room.hostPlayerId,
         stateRevision: startState!.stateRevision,
         turnId: startState!.currentTurnId,
-        payload: { claim: { handType: "HIGH_CARD", primaryRank: "A" } }
-      }
+        payload: { claim: { handType: "HIGH_CARD", primaryRank: "A" } },
+      },
     }),
-    1_100
+    1_100,
   );
   const claimState = await room.authority.getState();
 
@@ -380,10 +419,10 @@ test("RoomSessionManager rejects playerId mismatch and stale post-resolution rac
         playerId: room.friendPlayerId,
         stateRevision: claimState!.stateRevision,
         claimWindowId: claimState!.activeClaimWindow?.id,
-        payload: {}
-      }
+        payload: {},
+      },
     }),
-    1_200
+    1_200,
   );
 
   await manager.handleSocketMessage(
@@ -397,18 +436,25 @@ test("RoomSessionManager rejects playerId mismatch and stale post-resolution rac
         stateRevision: claimState!.stateRevision,
         turnId: claimState!.currentTurnId,
         claimWindowId: claimState!.activeClaimWindow?.id,
-        payload: { claim: { handType: "PAIR", primaryRank: "2" } }
-      }
+        payload: { claim: { handType: "PAIR", primaryRank: "2" } },
+      },
     }),
-    1_300
+    1_300,
   );
 
-  assert.equal(friendSocket.lastMessageOfType("ACTION_REJECTED")?.code, "ROUND_ALREADY_RESOLVED");
+  assert.equal(
+    friendSocket.lastMessageOfType("ACTION_REJECTED")?.code,
+    "ROUND_ALREADY_RESOLVED",
+  );
 });
 
 test("RoomSessionManager advances from round review into the next dealt round", async () => {
   const room = await startedRoom();
-  const manager = new RoomSessionManager(room.authority, () => 500, () => 0);
+  const manager = new RoomSessionManager(
+    room.authority,
+    () => 500,
+    () => 0,
+  );
   const hostSocket = new FakeSocket();
   const friendSocket = new FakeSocket();
   const hostSessionId = await connectPlayer({
@@ -416,14 +462,14 @@ test("RoomSessionManager advances from round review into the next dealt round", 
     socket: hostSocket,
     playerId: room.hostPlayerId,
     reconnectToken: room.hostToken,
-    identity: room.identity
+    identity: room.identity,
   });
   const friendSessionId = await connectPlayer({
     manager,
     socket: friendSocket,
     playerId: room.friendPlayerId,
     reconnectToken: room.friendToken,
-    identity: room.identity
+    identity: room.identity,
   });
 
   const startState = await room.authority.getState();
@@ -437,10 +483,10 @@ test("RoomSessionManager advances from round review into the next dealt round", 
         playerId: room.hostPlayerId,
         stateRevision: startState!.stateRevision,
         turnId: startState!.currentTurnId,
-        payload: { claim: { handType: "HIGH_CARD", primaryRank: "A" } }
-      }
+        payload: { claim: { handType: "HIGH_CARD", primaryRank: "A" } },
+      },
     }),
-    1_000
+    1_000,
   );
 
   const claimState = await room.authority.getState();
@@ -454,10 +500,10 @@ test("RoomSessionManager advances from round review into the next dealt round", 
         playerId: room.friendPlayerId,
         stateRevision: claimState!.stateRevision,
         claimWindowId: claimState!.activeClaimWindow?.id,
-        payload: {}
-      }
+        payload: {},
+      },
     }),
-    1_100
+    1_100,
   );
   assert.equal((await room.authority.getState())?.phase, "ResolvingRound");
 
@@ -467,9 +513,9 @@ test("RoomSessionManager advances from round review into the next dealt round", 
     friendSessionId,
     JSON.stringify({
       type: "START_NEXT_ROUND",
-      requestId: "next-1"
+      requestId: "next-1",
     }),
-    2_000
+    2_000,
   );
 
   const update = friendSocket.lastMessageOfType("ROOM_UPDATED");
@@ -487,7 +533,7 @@ test("RoomSessionManager automatically advances after the round reveal beat", as
   const manager = new RoomSessionManager(room.authority, {
     now: () => now,
     rng: () => 0,
-    autoNextRoundDelayMs: 0
+    autoNextRoundDelayMs: 0,
   });
   const hostSocket = new FakeSocket();
   const friendSocket = new FakeSocket();
@@ -496,14 +542,14 @@ test("RoomSessionManager automatically advances after the round reveal beat", as
     socket: hostSocket,
     playerId: room.hostPlayerId,
     reconnectToken: room.hostToken,
-    identity: room.identity
+    identity: room.identity,
   });
   const friendSessionId = await connectPlayer({
     manager,
     socket: friendSocket,
     playerId: room.friendPlayerId,
     reconnectToken: room.friendToken,
-    identity: room.identity
+    identity: room.identity,
   });
 
   const startState = await room.authority.getState();
@@ -517,10 +563,10 @@ test("RoomSessionManager automatically advances after the round reveal beat", as
         playerId: room.hostPlayerId,
         stateRevision: startState!.stateRevision,
         turnId: startState!.currentTurnId,
-        payload: { claim: { handType: "HIGH_CARD", primaryRank: "A" } }
-      }
+        payload: { claim: { handType: "HIGH_CARD", primaryRank: "A" } },
+      },
     }),
-    1_000
+    1_000,
   );
 
   const claimState = await room.authority.getState();
@@ -536,10 +582,10 @@ test("RoomSessionManager automatically advances after the round reveal beat", as
         playerId: room.friendPlayerId,
         stateRevision: claimState!.stateRevision,
         claimWindowId: claimState!.activeClaimWindow?.id,
-        payload: {}
-      }
+        payload: {},
+      },
     }),
-    1_100
+    1_100,
   );
 
   assert.equal((await room.authority.getState())?.phase, "ResolvingRound");
@@ -554,6 +600,43 @@ test("RoomSessionManager automatically advances after the round reveal beat", as
   assert.equal(update?.view.roundNumber, 2);
 });
 
+test("RoomSessionManager automatically applies a turn timeout when the active player waits too long", async () => {
+  const identity = identityProvider();
+  const state = roomStateWithBot({
+    currentTurnPlayerId: "human",
+    botCards: [createCard("A", "S")],
+  });
+  state.turnStartedAt = 100;
+  state.turnExpiresAt = 500;
+
+  const authority = new RoomAuthority(new MemoryRoomStateStore(state));
+  const manager = new RoomSessionManager(authority, {
+    now: () => 1_000,
+    botActionMinDelayMs: 0,
+    botActionMaxDelayMs: 0,
+  });
+  const socket = new FakeSocket();
+
+  await connectPlayer({
+    manager,
+    socket,
+    playerId: "human",
+    reconnectToken: "token-human",
+    identity,
+  });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  const timedOutState = await authority.getState();
+  const update = socket.lastMessageOfType("ROOM_UPDATED");
+
+  assert.equal(timedOutState?.phase, "ResolvingRound");
+  assert.equal(timedOutState?.lastRoundResult?.reason, "TIMEOUT");
+  assert.equal(timedOutState?.lastRoundResult?.penaltyPlayerId, "human");
+  assert.equal(update?.reason, "TURN_TIMEOUT");
+  assert.equal(update?.roundResult?.reason, "TIMEOUT");
+  assert.equal(update?.view.phase, "ResolvingRound");
+});
+
 test("RoomSessionManager adds bot seats from a host live session", async () => {
   const room = await lobbyRoom();
   const manager = new RoomSessionManager(room.authority, () => 500);
@@ -563,7 +646,7 @@ test("RoomSessionManager adds bot seats from a host live session", async () => {
     socket,
     playerId: room.hostPlayerId,
     reconnectToken: room.hostToken,
-    identity: room.identity
+    identity: room.identity,
   });
   socket.clear();
 
@@ -572,9 +655,9 @@ test("RoomSessionManager adds bot seats from a host live session", async () => {
     JSON.stringify({
       type: "ADD_BOT",
       requestId: "bot-add-1",
-      name: "Table Bot"
+      name: "Table Bot",
     }),
-    600
+    600,
   );
 
   const state = await room.authority.getState();
@@ -588,7 +671,7 @@ test("RoomSessionManager adds bot seats from a host live session", async () => {
   assert.equal(update?.view.players[1].isBot, true);
 });
 
-test("RoomSessionManager removes bot seats from a host live session before start", async () => {
+test("RoomSessionManager removes lobby seats from a host live session before start", async () => {
   const room = await lobbyRoom();
   const manager = new RoomSessionManager(room.authority, () => 500);
   const socket = new FakeSocket();
@@ -597,53 +680,80 @@ test("RoomSessionManager removes bot seats from a host live session before start
     socket,
     playerId: room.hostPlayerId,
     reconnectToken: room.hostToken,
-    identity: room.identity
+    identity: room.identity,
   });
 
-  await manager.handleSocketMessage(sessionId, JSON.stringify({ type: "ADD_BOT", requestId: "bot-add-1" }), 600);
-  const bot = (await room.authority.getState())?.players.find((player) => player.isBot);
+  await manager.handleSocketMessage(
+    sessionId,
+    JSON.stringify({ type: "ADD_BOT", requestId: "bot-add-1" }),
+    600,
+  );
+  const bot = (await room.authority.getState())?.players.find(
+    (player) => player.isBot,
+  );
   assert.ok(bot);
 
   socket.clear();
   await manager.handleSocketMessage(
     sessionId,
     JSON.stringify({
-      type: "REMOVE_BOT",
-      requestId: "bot-remove-1",
-      botPlayerId: bot.id
+      type: "REMOVE_PLAYER",
+      requestId: "player-remove-1",
+      targetPlayerId: bot.id,
     }),
-    700
+    700,
   );
 
   const state = await room.authority.getState();
   const update = socket.lastMessageOfType("ROOM_UPDATED");
-  assert.equal(state?.players.some((player) => player.id === bot.id), false);
-  assert.equal(update?.requestId, "bot-remove-1");
-  assert.equal(update?.view.players.some((player) => player.id === bot.id), false);
+  assert.equal(
+    state?.players.some((player) => player.id === bot.id),
+    false,
+  );
+  assert.equal(update?.requestId, "player-remove-1");
+  assert.equal(
+    update?.view.players.some((player) => player.id === bot.id),
+    false,
+  );
 });
 
 test("RoomSessionManager starts a bot-filled game from a host live session", async () => {
   const room = await lobbyRoom();
-  const manager = new RoomSessionManager(room.authority, () => 500, () => 0);
+  const manager = new RoomSessionManager(
+    room.authority,
+    () => 500,
+    () => 0,
+  );
   const socket = new FakeSocket();
   const sessionId = await connectPlayer({
     manager,
     socket,
     playerId: room.hostPlayerId,
     reconnectToken: room.hostToken,
-    identity: room.identity
+    identity: room.identity,
   });
 
-  await manager.handleSocketMessage(sessionId, JSON.stringify({ type: "ADD_BOT", requestId: "bot-add-1" }), 600);
+  await manager.handleSocketMessage(
+    sessionId,
+    JSON.stringify({ type: "ADD_BOT", requestId: "bot-add-1" }),
+    600,
+  );
   socket.clear();
-  await manager.handleSocketMessage(sessionId, JSON.stringify({ type: "START_GAME", requestId: "start-1" }), 700);
+  await manager.handleSocketMessage(
+    sessionId,
+    JSON.stringify({ type: "START_GAME", requestId: "start-1" }),
+    700,
+  );
 
   const state = await room.authority.getState();
   const update = socket.lastMessageOfType("ROOM_UPDATED");
 
   assert.equal(state?.phase, "RoundActive");
   assert.equal(state?.players.length, 2);
-  assert.equal(state?.players.every((player) => player.roundCards.length === 1), true);
+  assert.equal(
+    state?.players.every((player) => player.roundCards.length === 1),
+    true,
+  );
   assert.equal(update?.requestId, "start-1");
   assert.equal(update?.view.phase, "RoundActive");
   assert.equal(update?.view.viewerCards.length, 1);
@@ -655,14 +765,14 @@ test("RoomSessionManager runs a bot turn through the normal submit-claim reducer
     new MemoryRoomStateStore(
       roomStateWithBot({
         currentTurnPlayerId: "bot",
-        botCards: [createCard("A", "S")]
-      })
-    )
+        botCards: [createCard("A", "S")],
+      }),
+    ),
   );
   const manager = new RoomSessionManager(authority, {
     now: () => 1_000,
     botActionMinDelayMs: 0,
-    botActionMaxDelayMs: 0
+    botActionMaxDelayMs: 0,
   });
   const socket = new FakeSocket();
 
@@ -671,7 +781,7 @@ test("RoomSessionManager runs a bot turn through the normal submit-claim reducer
     socket,
     playerId: "human",
     reconnectToken: "token-human",
-    identity
+    identity,
   });
 
   const state = await authority.getState();
@@ -690,14 +800,14 @@ test("RoomSessionManager spaces bot actions with a configured delay", async () =
     new MemoryRoomStateStore(
       roomStateWithBot({
         currentTurnPlayerId: "bot",
-        botCards: [createCard("A", "S")]
-      })
-    )
+        botCards: [createCard("A", "S")],
+      }),
+    ),
   );
   const manager = new RoomSessionManager(authority, {
     now: () => 1_000,
     botActionMinDelayMs: 20,
-    botActionMaxDelayMs: 20
+    botActionMaxDelayMs: 20,
   });
   const socket = new FakeSocket();
 
@@ -706,7 +816,7 @@ test("RoomSessionManager spaces bot actions with a configured delay", async () =
     socket,
     playerId: "human",
     reconnectToken: "token-human",
-    identity
+    identity,
   });
 
   assert.equal((await authority.getState())?.currentClaim, undefined);
@@ -725,7 +835,7 @@ test("RoomSessionManager lets a bot call BullShit before its turn claim", async 
     handType: "ROYAL_FLUSH" as const,
     suit: "H" as const,
     playerId: "human",
-    sequence: 1
+    sequence: 1,
   };
   const authority = new RoomAuthority(
     new MemoryRoomStateStore(
@@ -738,16 +848,16 @@ test("RoomSessionManager lets a bot call BullShit before its turn claim", async 
           roundNumber: 1,
           openedByClaimSequence: 1,
           status: "OPEN",
-          openedAt: 100
+          openedAt: 100,
         },
-        botCards: [createCard("2", "S")]
-      })
-    )
+        botCards: [createCard("2", "S")],
+      }),
+    ),
   );
   const manager = new RoomSessionManager(authority, {
     now: () => 1_000,
     botActionMinDelayMs: 0,
-    botActionMaxDelayMs: 0
+    botActionMaxDelayMs: 0,
   });
   const socket = new FakeSocket();
 
@@ -756,7 +866,7 @@ test("RoomSessionManager lets a bot call BullShit before its turn claim", async 
     socket,
     playerId: "human",
     reconnectToken: "token-human",
-    identity
+    identity,
   });
 
   const state = await authority.getState();
@@ -774,19 +884,19 @@ test("RoomSessionManager bot loop stops at its configured step limit", async () 
   const state = roomStateWithBot({
     currentTurnPlayerId: "bot-a",
     botId: "bot-a",
-    botCards: [createCard("A", "S")]
+    botCards: [createCard("A", "S")],
   });
   state.players.push(
     sessionTestPlayer("bot-b", 2, [createCard("K", "H")], {
-      isBot: true
-    })
+      isBot: true,
+    }),
   );
   const authority = new RoomAuthority(new MemoryRoomStateStore(state));
   const manager = new RoomSessionManager(authority, {
     now: () => 1_000,
     botStepLimit: 1,
     botActionMinDelayMs: 0,
-    botActionMaxDelayMs: 0
+    botActionMaxDelayMs: 0,
   });
   const socket = new FakeSocket();
 
@@ -795,11 +905,13 @@ test("RoomSessionManager bot loop stops at its configured step limit", async () 
     socket,
     playerId: "human",
     reconnectToken: "token-human",
-    identity
+    identity,
   });
 
   const updated = await authority.getState();
-  const updates = socket.messages().filter((message) => message.type === "ROOM_UPDATED");
+  const updates = socket
+    .messages()
+    .filter((message) => message.type === "ROOM_UPDATED");
 
   assert.equal(updates.length, 1);
   assert.equal(updated?.currentClaim?.playerId, "bot-a");

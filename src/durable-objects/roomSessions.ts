@@ -15,7 +15,7 @@ import {
   type RoomUpdatedReason,
   type ServerActionResult,
   type ServerErrorCode,
-  type SubmitClaimPayload
+  type SubmitClaimPayload,
 } from "../shared/index.ts";
 
 export type RoomSocketEvent = {
@@ -26,7 +26,10 @@ export type RoomSocketLike = {
   accept?: () => void;
   send(data: string): void;
   close(code?: number, reason?: string): void;
-  addEventListener?: (type: "message" | "close" | "error", listener: (event: RoomSocketEvent) => void) => void;
+  addEventListener?: (
+    type: "message" | "close" | "error",
+    listener: (event: RoomSocketEvent) => void,
+  ) => void;
 };
 
 export type RoomSessionAuthority = {
@@ -35,7 +38,7 @@ export type RoomSessionAuthority = {
     playerId: string,
     reconnectToken: string,
     identity: RoomIdentityProvider,
-    now: number
+    now: number,
   ): Promise<LifecycleResult>;
   disconnectPlayer(playerId: string, now: number): Promise<LifecycleResult>;
   advanceToNextRound(now: number, rng: Rng): Promise<LifecycleResult>;
@@ -45,14 +48,24 @@ export type RoomSessionAuthority = {
     now: number;
     identity: RoomIdentityProvider;
   }): Promise<LifecycleResult>;
-  removeBot(input: {
+  removePlayer(input: {
     hostPlayerId: string;
-    botPlayerId: string;
+    targetPlayerId: string;
     now: number;
   }): Promise<LifecycleResult>;
-  startGame(hostPlayerId: string, now: number, rng: Rng): Promise<LifecycleResult>;
-  submitClaim(envelope: ClientActionEnvelope<SubmitClaimPayload>, now: number): Promise<ServerActionResult>;
-  callBullshit(envelope: ClientActionEnvelope<CallBullshitPayload>, now: number): Promise<ServerActionResult>;
+  startGame(
+    hostPlayerId: string,
+    now: number,
+    rng: Rng,
+  ): Promise<LifecycleResult>;
+  submitClaim(
+    envelope: ClientActionEnvelope<SubmitClaimPayload>,
+    now: number,
+  ): Promise<ServerActionResult>;
+  callBullshit(
+    envelope: ClientActionEnvelope<CallBullshitPayload>,
+    now: number,
+  ): Promise<ServerActionResult>;
   timeout(turnId: string, now: number): Promise<ServerActionResult>;
 };
 
@@ -116,10 +129,14 @@ function parseClientMessage(raw: unknown): RoomClientMessage | null {
   }
 }
 
-function messageRequestId(message: RoomClientMessage | null): string | undefined {
+function messageRequestId(
+  message: RoomClientMessage | null,
+): string | undefined {
   if (!message) return undefined;
-  if ("requestId" in message && typeof message.requestId === "string") return message.requestId;
-  if ("envelope" in message && typeof message.envelope?.requestId === "string") return message.envelope.requestId;
+  if ("requestId" in message && typeof message.requestId === "string")
+    return message.requestId;
+  if ("envelope" in message && typeof message.envelope?.requestId === "string")
+    return message.envelope.requestId;
   return undefined;
 }
 
@@ -138,11 +155,13 @@ export class RoomSessionManager {
   private autoNextRoundRevision?: number;
   private botActionTimer?: ReturnType<typeof setTimeout>;
   private botActionKey?: string;
+  private turnTimeoutTimer?: ReturnType<typeof setTimeout>;
+  private turnTimeoutKey?: string;
 
   constructor(
     authority: RoomSessionAuthority,
     nowOrOptions: (() => number) | RoomSessionManagerOptions = () => Date.now(),
-    rng?: Rng
+    rng?: Rng,
   ) {
     this.authority = authority;
     if (typeof nowOrOptions === "function") {
@@ -156,9 +175,12 @@ export class RoomSessionManager {
       this.now = nowOrOptions.now ?? (() => Date.now());
       this.rng = nowOrOptions.rng ?? (() => Math.random());
       this.botStepLimit = nowOrOptions.botStepLimit ?? DEFAULT_BOT_STEP_LIMIT;
-      this.autoNextRoundDelayMs = nowOrOptions.autoNextRoundDelayMs ?? DEFAULT_AUTO_NEXT_ROUND_DELAY_MS;
-      this.botActionMinDelayMs = nowOrOptions.botActionMinDelayMs ?? DEFAULT_BOT_ACTION_MIN_DELAY_MS;
-      this.botActionMaxDelayMs = nowOrOptions.botActionMaxDelayMs ?? DEFAULT_BOT_ACTION_MAX_DELAY_MS;
+      this.autoNextRoundDelayMs =
+        nowOrOptions.autoNextRoundDelayMs ?? DEFAULT_AUTO_NEXT_ROUND_DELAY_MS;
+      this.botActionMinDelayMs =
+        nowOrOptions.botActionMinDelayMs ?? DEFAULT_BOT_ACTION_MIN_DELAY_MS;
+      this.botActionMaxDelayMs =
+        nowOrOptions.botActionMaxDelayMs ?? DEFAULT_BOT_ACTION_MAX_DELAY_MS;
     }
   }
 
@@ -179,14 +201,14 @@ export class RoomSessionManager {
       params.playerId,
       params.reconnectToken,
       params.identity,
-      params.now ?? this.now()
+      params.now ?? this.now(),
     );
 
     if (!connected.ok) {
       this.sendSocket(params.socket, {
         type: "SESSION_REJECTED",
         code: connected.code,
-        latestStateRevision: connected.latestStateRevision
+        latestStateRevision: connected.latestStateRevision,
       });
       params.socket.close?.(1008, connected.code);
       return connected;
@@ -197,7 +219,7 @@ export class RoomSessionManager {
       id: `session-${this.sessionCounter}`,
       playerId: params.playerId,
       socket: params.socket,
-      identity: params.identity
+      identity: params.identity,
     };
 
     this.sessions.set(session.id, session);
@@ -208,20 +230,27 @@ export class RoomSessionManager {
       type: "SESSION_ACCEPTED",
       sessionId: session.id,
       playerId: params.playerId,
-      view
+      view,
     });
-    await this.broadcastState("CONNECTED", connected.state, { excludeSessionId: session.id });
+    await this.broadcastState("CONNECTED", connected.state, {
+      excludeSessionId: session.id,
+    });
     this.scheduleAutoNextRound(connected.state);
+    this.scheduleTurnTimeout(connected.state);
     await this.processBots();
 
     return {
       ok: true,
       sessionId: session.id,
-      view
+      view,
     };
   }
 
-  async handleSocketMessage(sessionId: string, raw: unknown, now: number = this.now()): Promise<void> {
+  async handleSocketMessage(
+    sessionId: string,
+    raw: unknown,
+    now: number = this.now(),
+  ): Promise<void> {
     const session = this.sessions.get(sessionId);
     if (!session) return;
 
@@ -230,7 +259,7 @@ export class RoomSessionManager {
       await this.reject(session, {
         requestId: undefined,
         code: "INVALID_MESSAGE",
-        latestStateRevision: await this.latestRevision()
+        latestStateRevision: await this.latestRevision(),
       });
       return;
     }
@@ -239,12 +268,16 @@ export class RoomSessionManager {
       case "PING":
         this.send(session, {
           type: "PONG",
-          requestId: message.requestId
+          requestId: message.requestId,
         });
         return;
 
       case "REQUEST_SYNC":
-        await this.sendStateToSession(session, "SYNC_REQUESTED", message.requestId);
+        await this.sendStateToSession(
+          session,
+          "SYNC_REQUESTED",
+          message.requestId,
+        );
         return;
 
       case "ADD_BOT":
@@ -255,8 +288,8 @@ export class RoomSessionManager {
             hostPlayerId: session.playerId,
             name: message.name,
             now,
-            identity: session.identity
-          })
+            identity: session.identity,
+          }),
         );
         return;
 
@@ -264,11 +297,23 @@ export class RoomSessionManager {
         await this.handleLifecycleResult(
           session,
           message.requestId,
-          await this.authority.removeBot({
+          await this.authority.removePlayer({
             hostPlayerId: session.playerId,
-            botPlayerId: message.botPlayerId,
-            now
-          })
+            targetPlayerId: message.botPlayerId,
+            now,
+          }),
+        );
+        return;
+
+      case "REMOVE_PLAYER":
+        await this.handleLifecycleResult(
+          session,
+          message.requestId,
+          await this.authority.removePlayer({
+            hostPlayerId: session.playerId,
+            targetPlayerId: message.targetPlayerId,
+            now,
+          }),
         );
         return;
 
@@ -276,7 +321,7 @@ export class RoomSessionManager {
         await this.handleLifecycleResult(
           session,
           message.requestId,
-          await this.authority.startGame(session.playerId, now, this.rng)
+          await this.authority.startGame(session.playerId, now, this.rng),
         );
         return;
 
@@ -284,7 +329,7 @@ export class RoomSessionManager {
         await this.handleLifecycleResult(
           session,
           message.requestId,
-          await this.authority.advanceToNextRound(now, this.rng)
+          await this.authority.advanceToNextRound(now, this.rng),
         );
         return;
 
@@ -297,19 +342,27 @@ export class RoomSessionManager {
         return;
 
       case "EXPIRE_TURN":
-        await this.handleTimeout(session, message.requestId, message.turnId, now);
+        await this.handleTimeout(
+          session,
+          message.requestId,
+          message.turnId,
+          now,
+        );
         return;
 
       default:
         await this.reject(session, {
           requestId: messageRequestId(message),
           code: "INVALID_MESSAGE",
-          latestStateRevision: await this.latestRevision()
+          latestStateRevision: await this.latestRevision(),
         });
     }
   }
 
-  async disconnectSession(sessionId: string, now: number = this.now()): Promise<void> {
+  async disconnectSession(
+    sessionId: string,
+    now: number = this.now(),
+  ): Promise<void> {
     const session = this.sessions.get(sessionId);
     if (!session) return;
 
@@ -321,6 +374,8 @@ export class RoomSessionManager {
     const result = await this.authority.disconnectPlayer(session.playerId, now);
     if (result.ok) {
       await this.broadcastState("DISCONNECTED", result.state);
+      this.scheduleAutoNextRound(result.state);
+      this.scheduleTurnTimeout(result.state);
       await this.processBots();
     }
   }
@@ -328,36 +383,52 @@ export class RoomSessionManager {
   private async handleSubmitClaim(
     session: SessionRecord,
     envelope: ClientActionEnvelope<SubmitClaimPayload>,
-    now: number
+    now: number,
   ): Promise<void> {
     const envelopeRequestId = envelope.requestId;
     if (!this.envelopeBelongsToSession(session, envelope)) {
-      await this.rejectWithCurrentView(session, envelopeRequestId, "PLAYER_SESSION_MISMATCH");
+      await this.rejectWithCurrentView(
+        session,
+        envelopeRequestId,
+        "PLAYER_SESSION_MISMATCH",
+      );
       return;
     }
 
-    await this.handleActionResult(session, envelope.requestId, await this.authority.submitClaim(envelope, now));
+    await this.handleActionResult(
+      session,
+      envelope.requestId,
+      await this.authority.submitClaim(envelope, now),
+    );
   }
 
   private async handleCallBullshit(
     session: SessionRecord,
     envelope: ClientActionEnvelope<CallBullshitPayload>,
-    now: number
+    now: number,
   ): Promise<void> {
     const envelopeRequestId = envelope.requestId;
     if (!this.envelopeBelongsToSession(session, envelope)) {
-      await this.rejectWithCurrentView(session, envelopeRequestId, "PLAYER_SESSION_MISMATCH");
+      await this.rejectWithCurrentView(
+        session,
+        envelopeRequestId,
+        "PLAYER_SESSION_MISMATCH",
+      );
       return;
     }
 
-    await this.handleActionResult(session, envelope.requestId, await this.authority.callBullshit(envelope, now));
+    await this.handleActionResult(
+      session,
+      envelope.requestId,
+      await this.authority.callBullshit(envelope, now),
+    );
   }
 
   private async handleTimeout(
     session: SessionRecord,
     requestId: string,
     turnId: string,
-    now: number
+    now: number,
   ): Promise<void> {
     const result = await this.authority.timeout(turnId, now);
     await this.handleActionResult(session, requestId, result);
@@ -366,43 +437,55 @@ export class RoomSessionManager {
   private async handleActionResult(
     session: SessionRecord,
     requestId: string | undefined,
-    result: ServerActionResult
+    result: ServerActionResult,
   ): Promise<void> {
     if (!result.ok) {
-      await this.rejectWithCurrentView(session, requestId, result.code, result.latestStateRevision);
+      await this.rejectWithCurrentView(
+        session,
+        requestId,
+        result.code,
+        result.latestStateRevision,
+      );
       return;
     }
 
     await this.broadcastState("ACTION_ACCEPTED", result.state, {
       requestId,
       acceptedByPlayerId: session.playerId,
-      roundResult: result.roundResult
+      roundResult: result.roundResult,
     });
     this.scheduleAutoNextRound(result.state);
+    this.scheduleTurnTimeout(result.state);
     await this.processBots();
   }
 
   private async handleLifecycleResult(
     session: SessionRecord,
     requestId: string | undefined,
-    result: LifecycleResult
+    result: LifecycleResult,
   ): Promise<void> {
     if (!result.ok) {
-      await this.rejectWithCurrentView(session, requestId, result.code, result.latestStateRevision);
+      await this.rejectWithCurrentView(
+        session,
+        requestId,
+        result.code,
+        result.latestStateRevision,
+      );
       return;
     }
 
     await this.broadcastState("ACTION_ACCEPTED", result.state, {
       requestId,
-      acceptedByPlayerId: session.playerId
+      acceptedByPlayerId: session.playerId,
     });
     this.scheduleAutoNextRound(result.state);
+    this.scheduleTurnTimeout(result.state);
     await this.processBots();
   }
 
   private envelopeBelongsToSession<TPayload>(
     session: SessionRecord,
-    envelope: ClientActionEnvelope<TPayload> | undefined
+    envelope: ClientActionEnvelope<TPayload> | undefined,
   ): envelope is ClientActionEnvelope<TPayload> {
     return Boolean(envelope && envelope.playerId === session.playerId);
   }
@@ -434,13 +517,13 @@ export class RoomSessionManager {
     session: SessionRecord,
     requestId: string | undefined,
     code: ServerErrorCode,
-    latestStateRevision?: number
+    latestStateRevision?: number,
   ): Promise<void> {
     await this.reject(session, {
       requestId,
       code,
-      latestStateRevision: latestStateRevision ?? await this.latestRevision(),
-      view: await this.privateView(session.playerId)
+      latestStateRevision: latestStateRevision ?? (await this.latestRevision()),
+      view: await this.privateView(session.playerId),
     });
   }
 
@@ -451,18 +534,20 @@ export class RoomSessionManager {
       code: ServerErrorCode;
       latestStateRevision: number;
       view?: PrivateGameView;
-    }
+    },
   ): Promise<void> {
     this.send(session, {
       type: "ACTION_REJECTED",
       requestId: message.requestId,
       code: message.code,
       latestStateRevision: message.latestStateRevision,
-      view: message.view
+      view: message.view,
     });
   }
 
-  private async privateView(playerId: string): Promise<PrivateGameView | undefined> {
+  private async privateView(
+    playerId: string,
+  ): Promise<PrivateGameView | undefined> {
     const state = await this.authority.getState();
     return state ? createPrivateGameView(state, playerId) : undefined;
   }
@@ -470,14 +555,14 @@ export class RoomSessionManager {
   private async sendStateToSession(
     session: SessionRecord,
     reason: RoomUpdatedReason,
-    requestId?: string
+    requestId?: string,
   ): Promise<void> {
     const view = await this.privateView(session.playerId);
     if (!view) {
       await this.reject(session, {
         requestId,
         code: "ROOM_NOT_FOUND",
-        latestStateRevision: 0
+        latestStateRevision: 0,
       });
       return;
     }
@@ -486,7 +571,7 @@ export class RoomSessionManager {
       type: "ROOM_UPDATED",
       reason,
       requestId,
-      view
+      view,
     });
   }
 
@@ -498,7 +583,7 @@ export class RoomSessionManager {
       requestId?: string;
       acceptedByPlayerId?: string;
       roundResult?: RoundResult;
-    } = {}
+    } = {},
   ): Promise<void> {
     for (const session of this.sessions.values()) {
       if (session.id === options.excludeSessionId) continue;
@@ -508,12 +593,14 @@ export class RoomSessionManager {
         requestId: options.requestId,
         acceptedByPlayerId: options.acceptedByPlayerId,
         roundResult: options.roundResult,
-        view: createPrivateGameView(state, session.playerId)
+        view: createPrivateGameView(state, session.playerId),
       });
     }
   }
 
-  private async processBots(remainingSteps: number = this.botStepLimit): Promise<void> {
+  private async processBots(
+    remainingSteps: number = this.botStepLimit,
+  ): Promise<void> {
     if (remainingSteps <= 0 || this.processingBots) return;
 
     const state = await this.authority.getState();
@@ -538,7 +625,11 @@ export class RoomSessionManager {
 
     const delayMs = this.botActionDelayMs();
     if (delayMs <= 0) {
-      await this.runScheduledBotAction(state.stateRevision, actionKey, remainingSteps);
+      await this.runScheduledBotAction(
+        state.stateRevision,
+        actionKey,
+        remainingSteps,
+      );
       return;
     }
 
@@ -546,13 +637,20 @@ export class RoomSessionManager {
       void this.runScheduledBotAction(state.stateRevision, actionKey);
     }, delayMs);
 
-    const timer = this.botActionTimer as ReturnType<typeof setTimeout> & { unref?: () => void };
+    const timer = this.botActionTimer as ReturnType<typeof setTimeout> & {
+      unref?: () => void;
+    };
     timer.unref?.();
   }
 
-  private nextBotDecision(state: GameState): ({ botPlayerId: string } & BotDecision) | null {
+  private nextBotDecision(
+    state: GameState,
+  ): ({ botPlayerId: string } & BotDecision) | null {
     const activeBots = [...state.players]
-      .filter((player) => player.isBot && !player.eliminated && player.leftAt === undefined)
+      .filter(
+        (player) =>
+          player.isBot && !player.eliminated && player.leftAt === undefined,
+      )
       .sort((left, right) => left.seatIndex - right.seatIndex);
 
     for (const bot of activeBots) {
@@ -560,7 +658,7 @@ export class RoomSessionManager {
       if (decision.type !== "WAIT") {
         return {
           ...decision,
-          botPlayerId: bot.id
+          botPlayerId: bot.id,
         };
       }
     }
@@ -568,12 +666,16 @@ export class RoomSessionManager {
     return null;
   }
 
-  private botDecisionKey(state: GameState, decision: { botPlayerId: string } & BotDecision): string {
-    const actionId = decision.type === "SUBMIT_CLAIM"
-      ? decision.turnId
-      : decision.type === "CALL_BULLSHIT"
-        ? decision.claimWindowId
-        : "wait";
+  private botDecisionKey(
+    state: GameState,
+    decision: { botPlayerId: string } & BotDecision,
+  ): string {
+    const actionId =
+      decision.type === "SUBMIT_CLAIM"
+        ? decision.turnId
+        : decision.type === "CALL_BULLSHIT"
+          ? decision.claimWindowId
+          : "wait";
     return `${state.stateRevision}:${decision.botPlayerId}:${decision.type}:${actionId ?? "none"}`;
   }
 
@@ -595,7 +697,7 @@ export class RoomSessionManager {
   private async runScheduledBotAction(
     expectedRevision: number,
     expectedActionKey: string,
-    remainingSteps: number = this.botStepLimit
+    remainingSteps: number = this.botStepLimit,
   ): Promise<void> {
     if (this.botActionKey && this.botActionKey !== expectedActionKey) {
       return;
@@ -609,12 +711,19 @@ export class RoomSessionManager {
 
     try {
       const state = await this.authority.getState();
-      if (!state || state.phase !== "RoundActive" || state.stateRevision !== expectedRevision) {
+      if (
+        !state ||
+        state.phase !== "RoundActive" ||
+        state.stateRevision !== expectedRevision
+      ) {
         return;
       }
 
       const decision = this.nextBotDecision(state);
-      if (!decision || this.botDecisionKey(state, decision) !== expectedActionKey) {
+      if (
+        !decision ||
+        this.botDecisionKey(state, decision) !== expectedActionKey
+      ) {
         return;
       }
 
@@ -624,9 +733,10 @@ export class RoomSessionManager {
       await this.broadcastState("ACTION_ACCEPTED", result.state, {
         requestId: `bot:${decision.botPlayerId}:${state.stateRevision}`,
         acceptedByPlayerId: decision.botPlayerId,
-        roundResult: result.roundResult
+        roundResult: result.roundResult,
       });
       this.scheduleAutoNextRound(result.state);
+      this.scheduleTurnTimeout(result.state);
       shouldContinue = result.state.phase === "RoundActive";
     } finally {
       this.processingBots = false;
@@ -640,7 +750,7 @@ export class RoomSessionManager {
   private applyBotDecision(
     state: GameState,
     decision: { botPlayerId: string } & BotDecision,
-    now: number
+    now: number,
   ): Promise<ServerActionResult> {
     const requestId = `bot:${decision.botPlayerId}:${state.stateRevision}`;
 
@@ -654,10 +764,10 @@ export class RoomSessionManager {
           turnId: decision.turnId,
           claimWindowId: decision.claimWindowId,
           payload: {
-            claim: decision.claim
-          }
+            claim: decision.claim,
+          },
         },
-        now
+        now,
       );
     }
 
@@ -669,16 +779,16 @@ export class RoomSessionManager {
           playerId: decision.botPlayerId,
           stateRevision: state.stateRevision,
           claimWindowId: decision.claimWindowId,
-          payload: {}
+          payload: {},
         },
-        now
+        now,
       );
     }
 
     return Promise.resolve({
       ok: false,
       code: "INTERNAL_ERROR",
-      latestStateRevision: state.stateRevision
+      latestStateRevision: state.stateRevision,
     });
   }
 
@@ -696,7 +806,10 @@ export class RoomSessionManager {
       return;
     }
 
-    if (this.autoNextRoundRevision === state.stateRevision && this.autoNextRoundTimer !== undefined) {
+    if (
+      this.autoNextRoundRevision === state.stateRevision &&
+      this.autoNextRoundTimer !== undefined
+    ) {
       return;
     }
 
@@ -706,28 +819,143 @@ export class RoomSessionManager {
       void this.advanceAutomaticallyFromRoundReview(state.stateRevision);
     }, this.autoNextRoundDelayMs);
 
-    const timer = this.autoNextRoundTimer as ReturnType<typeof setTimeout> & { unref?: () => void };
+    const timer = this.autoNextRoundTimer as ReturnType<typeof setTimeout> & {
+      unref?: () => void;
+    };
     timer.unref?.();
   }
 
-  private async advanceAutomaticallyFromRoundReview(expectedRevision: number): Promise<void> {
+  private async advanceAutomaticallyFromRoundReview(
+    expectedRevision: number,
+  ): Promise<void> {
     this.autoNextRoundTimer = undefined;
     this.autoNextRoundRevision = undefined;
 
     const state = await this.authority.getState();
-    if (!state || state.phase !== "ResolvingRound" || state.stateRevision !== expectedRevision) {
+    if (
+      !state ||
+      state.phase !== "ResolvingRound" ||
+      state.stateRevision !== expectedRevision
+    ) {
       return;
     }
 
-    const result = await this.authority.advanceToNextRound(this.now(), this.rng);
+    const result = await this.authority.advanceToNextRound(
+      this.now(),
+      this.rng,
+    );
     if (!result.ok) {
       return;
     }
 
     await this.broadcastState("AUTO_NEXT_ROUND", result.state, {
-      requestId: `auto-next-round:${expectedRevision}`
+      requestId: `auto-next-round:${expectedRevision}`,
     });
     this.scheduleAutoNextRound(result.state);
+    this.scheduleTurnTimeout(result.state);
+    await this.processBots();
+  }
+
+  private turnTimeoutScheduleKey(state: GameState): string | undefined {
+    if (
+      state.phase !== "RoundActive" ||
+      !state.currentTurnId ||
+      state.turnExpiresAt === undefined
+    ) {
+      return undefined;
+    }
+    return `${state.stateRevision}:${state.currentTurnId}:${state.turnExpiresAt}`;
+  }
+
+  private clearTurnTimeout(): void {
+    if (this.turnTimeoutTimer !== undefined) {
+      clearTimeout(this.turnTimeoutTimer);
+    }
+    this.turnTimeoutTimer = undefined;
+    this.turnTimeoutKey = undefined;
+  }
+
+  private scheduleTurnTimeout(state: GameState): void {
+    const timeoutKey = this.turnTimeoutScheduleKey(state);
+    if (!timeoutKey) {
+      this.clearTurnTimeout();
+      return;
+    }
+
+    if (
+      this.turnTimeoutKey === timeoutKey &&
+      this.turnTimeoutTimer !== undefined
+    ) {
+      return;
+    }
+
+    this.clearTurnTimeout();
+    this.turnTimeoutKey = timeoutKey;
+    const delayMs = Math.max(0, state.turnExpiresAt! - this.now());
+
+    this.turnTimeoutTimer = setTimeout(() => {
+      void this.runScheduledTurnTimeout(
+        timeoutKey,
+        state.stateRevision,
+        state.currentTurnId!,
+      );
+    }, delayMs);
+
+    const timer = this.turnTimeoutTimer as ReturnType<typeof setTimeout> & {
+      unref?: () => void;
+    };
+    timer.unref?.();
+  }
+
+  private async runScheduledTurnTimeout(
+    expectedTimeoutKey: string,
+    expectedRevision: number,
+    expectedTurnId: string,
+  ): Promise<void> {
+    if (this.turnTimeoutKey !== expectedTimeoutKey) {
+      return;
+    }
+
+    this.turnTimeoutTimer = undefined;
+    this.turnTimeoutKey = undefined;
+
+    const state = await this.authority.getState();
+    if (
+      !state ||
+      state.phase !== "RoundActive" ||
+      state.stateRevision !== expectedRevision
+    ) {
+      if (state) this.scheduleTurnTimeout(state);
+      return;
+    }
+    if (
+      state.currentTurnId !== expectedTurnId ||
+      state.turnExpiresAt === undefined
+    ) {
+      this.scheduleTurnTimeout(state);
+      return;
+    }
+
+    const now = this.now();
+    if (now < state.turnExpiresAt) {
+      this.scheduleTurnTimeout(state);
+      return;
+    }
+
+    const result = await this.authority.timeout(expectedTurnId, now);
+    if (!result.ok) {
+      const latestState = await this.authority.getState();
+      if (latestState) this.scheduleTurnTimeout(latestState);
+      return;
+    }
+
+    await this.broadcastState("TURN_TIMEOUT", result.state, {
+      requestId: `turn-timeout:${expectedTurnId}`,
+      acceptedByPlayerId: state.currentTurnPlayerId,
+      roundResult: result.roundResult,
+    });
+    this.scheduleAutoNextRound(result.state);
+    this.scheduleTurnTimeout(result.state);
     await this.processBots();
   }
 

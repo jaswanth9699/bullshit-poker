@@ -4,7 +4,7 @@ import type {
   RoomClientMessage,
   RoomServerMessage,
   SubmitClaimPayload,
-  CallBullshitPayload
+  CallBullshitPayload,
 } from "../shared/index.ts";
 
 export type SeatCredential = {
@@ -40,13 +40,16 @@ export type ActionWireResult =
       latestStateRevision: number;
     };
 
-async function postJson<TResponse>(path: string, body: unknown): Promise<TResponse> {
+async function postJson<TResponse>(
+  path: string,
+  body: unknown,
+): Promise<TResponse> {
   const response = await fetch(path, {
     method: "POST",
     headers: {
-      "content-type": "application/json"
+      "content-type": "application/json",
     },
-    body: JSON.stringify(body)
+    body: JSON.stringify(body),
   });
 
   const result = (await response.json()) as TResponse;
@@ -56,51 +59,90 @@ async function postJson<TResponse>(path: string, body: unknown): Promise<TRespon
   return result;
 }
 
-export function createRoom(hostName: string, pin: string): Promise<LifecycleWireResult> {
+export function createRoom(
+  hostName: string,
+  pin: string,
+): Promise<LifecycleWireResult> {
   return postJson("/api/rooms", { hostName, pin });
 }
 
-export function joinRoom(code: string, name: string, pin: string): Promise<LifecycleWireResult> {
+export function joinRoom(
+  code: string,
+  name: string,
+  pin: string,
+): Promise<LifecycleWireResult> {
   return postJson(`/api/rooms/${encodeURIComponent(code)}/join`, { name, pin });
 }
 
-export function addBotHttp(code: string, hostPlayerId: string, name?: string): Promise<LifecycleWireResult> {
-  return postJson(`/api/rooms/${encodeURIComponent(code)}/bots/add`, { hostPlayerId, name });
+export function addBotHttp(
+  code: string,
+  hostPlayerId: string,
+  name?: string,
+): Promise<LifecycleWireResult> {
+  return postJson(`/api/rooms/${encodeURIComponent(code)}/bots/add`, {
+    hostPlayerId,
+    name,
+  });
 }
 
-export function removeBotHttp(code: string, hostPlayerId: string, botPlayerId: string): Promise<LifecycleWireResult> {
-  return postJson(`/api/rooms/${encodeURIComponent(code)}/bots/remove`, { hostPlayerId, botPlayerId });
+export function removePlayerHttp(
+  code: string,
+  hostPlayerId: string,
+  targetPlayerId: string,
+): Promise<LifecycleWireResult> {
+  return postJson(`/api/rooms/${encodeURIComponent(code)}/players/remove`, {
+    hostPlayerId,
+    targetPlayerId,
+  });
 }
 
-export function startGameHttp(code: string, hostPlayerId: string): Promise<LifecycleWireResult> {
-  return postJson(`/api/rooms/${encodeURIComponent(code)}/start`, { hostPlayerId });
+export function startGameHttp(
+  code: string,
+  hostPlayerId: string,
+): Promise<LifecycleWireResult> {
+  return postJson(`/api/rooms/${encodeURIComponent(code)}/start`, {
+    hostPlayerId,
+  });
 }
 
-export function nextRoundHttp(code: string, playerId: string): Promise<LifecycleWireResult> {
-  return postJson(`/api/rooms/${encodeURIComponent(code)}/next-round`, { playerId });
+export function nextRoundHttp(
+  code: string,
+  playerId: string,
+): Promise<LifecycleWireResult> {
+  return postJson(`/api/rooms/${encodeURIComponent(code)}/next-round`, {
+    playerId,
+  });
 }
 
 export function submitClaimHttp(
   code: string,
-  envelope: ClientActionEnvelope<SubmitClaimPayload>
+  envelope: ClientActionEnvelope<SubmitClaimPayload>,
 ): Promise<ActionWireResult> {
-  return postJson(`/api/rooms/${encodeURIComponent(code)}/actions/submit-claim`, { envelope });
+  return postJson(
+    `/api/rooms/${encodeURIComponent(code)}/actions/submit-claim`,
+    { envelope },
+  );
 }
 
 export function callBullshitHttp(
   code: string,
-  envelope: ClientActionEnvelope<CallBullshitPayload>
+  envelope: ClientActionEnvelope<CallBullshitPayload>,
 ): Promise<ActionWireResult> {
-  return postJson(`/api/rooms/${encodeURIComponent(code)}/actions/call-bullshit`, { envelope });
+  return postJson(
+    `/api/rooms/${encodeURIComponent(code)}/actions/call-bullshit`,
+    { envelope },
+  );
 }
 
 export function connectRoomSocket(
   credential: SeatCredential,
   onMessage: (message: RoomServerMessage) => void,
-  onStatus: (status: "connecting" | "open" | "closed" | "error") => void
+  onStatus: (status: "connecting" | "open" | "closed" | "error") => void,
 ): WebSocket {
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-  const url = new URL(`${protocol}//${window.location.host}/api/rooms/${encodeURIComponent(credential.code)}/live`);
+  const url = new URL(
+    `${protocol}//${window.location.host}/api/rooms/${encodeURIComponent(credential.code)}/live`,
+  );
   url.searchParams.set("playerId", credential.playerId);
   url.searchParams.set("reconnectToken", credential.reconnectToken);
 
@@ -119,7 +161,10 @@ export function connectRoomSocket(
   return socket;
 }
 
-export function sendRoomMessage(socket: WebSocket | null, message: RoomClientMessage): boolean {
+export function sendRoomMessage(
+  socket: WebSocket | null,
+  message: RoomClientMessage,
+): boolean {
   if (!socket || socket.readyState !== WebSocket.OPEN) {
     return false;
   }

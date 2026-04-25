@@ -1,8 +1,21 @@
-import { compareClaims, normalizeClaimShape, validateClaimShape } from "../claims/compareClaims.ts";
+import {
+  compareClaims,
+  normalizeClaimShape,
+  validateClaimShape,
+} from "../claims/compareClaims.ts";
 import type { Claim } from "../claims/claimTypes.ts";
-import { resolveBullshitCall, resolveFinalClaim, resolveTimeout } from "./roundResolution.ts";
+import {
+  resolveBullshitCall,
+  resolveFinalClaim,
+  resolveTimeout,
+} from "./roundResolution.ts";
 import { advanceToNextActivePlayer } from "./seatOrder.ts";
-import type { ClientActionEnvelope, ServerActionResult, SubmitClaimPayload, CallBullshitPayload } from "./protocol.ts";
+import type {
+  ClientActionEnvelope,
+  ServerActionResult,
+  SubmitClaimPayload,
+  CallBullshitPayload,
+} from "./protocol.ts";
 import type { GameState, PlayerState, ResolutionResult } from "./gameTypes.ts";
 import type { ServerErrorCode } from "./errors.ts";
 
@@ -12,32 +25,44 @@ function error(state: GameState, code: ServerErrorCode): ServerActionResult {
   return {
     ok: false,
     code,
-    latestStateRevision: state.stateRevision
+    latestStateRevision: state.stateRevision,
   };
 }
 
-function success(state: GameState, roundResult?: ResolutionResult["roundResult"]): ServerActionResult {
+function success(
+  state: GameState,
+  roundResult?: ResolutionResult["roundResult"],
+): ServerActionResult {
   return {
     ok: true,
     state,
     newStateRevision: state.stateRevision,
-    roundResult
+    roundResult,
   };
 }
 
-function isActivePlayer(player: PlayerState | undefined): player is PlayerState {
+function isActivePlayer(
+  player: PlayerState | undefined,
+): player is PlayerState {
   return Boolean(player && !player.eliminated && player.leftAt === undefined);
 }
 
-function findPlayer(state: GameState, playerId: string): PlayerState | undefined {
+function findPlayer(
+  state: GameState,
+  playerId: string,
+): PlayerState | undefined {
   return state.players.find((player) => player.id === playerId);
 }
 
 function ensureBaseActionIsValid<TPayload>(
   state: GameState,
-  envelope: ClientActionEnvelope<TPayload>
+  envelope: ClientActionEnvelope<TPayload>,
 ): ServerErrorCode | null {
-  if (state.phase === "GameOver" || state.phase === "Closed" || state.phase === "ResolvingRound") {
+  if (
+    state.phase === "GameOver" ||
+    state.phase === "Closed" ||
+    state.phase === "ResolvingRound"
+  ) {
     return "ROUND_ALREADY_RESOLVED";
   }
   if (state.phase !== "RoundActive") {
@@ -64,7 +89,7 @@ function ensureBaseActionIsValid<TPayload>(
 function ensureTurnActionIsValid<TPayload>(
   state: GameState,
   envelope: ClientActionEnvelope<TPayload>,
-  now: number
+  now: number,
 ): ServerErrorCode | null {
   const baseError = ensureBaseActionIsValid(state, envelope);
   if (baseError) return baseError;
@@ -81,8 +106,15 @@ function ensureTurnActionIsValid<TPayload>(
   return null;
 }
 
-function activeClaimWindowMatches(state: GameState, claimWindowId: string | undefined): boolean {
-  return Boolean(state.activeClaimWindow && state.activeClaimWindow.status === "OPEN" && state.activeClaimWindow.id === claimWindowId);
+function activeClaimWindowMatches(
+  state: GameState,
+  claimWindowId: string | undefined,
+): boolean {
+  return Boolean(
+    state.activeClaimWindow &&
+    state.activeClaimWindow.status === "OPEN" &&
+    state.activeClaimWindow.id === claimWindowId,
+  );
 }
 
 function claimId(state: GameState, sequence: number): string {
@@ -97,7 +129,12 @@ function turnId(state: GameState, playerId: string, sequence: number): string {
   return `${state.roomId}:round:${state.roundNumber}:turn:${playerId}:${sequence}`;
 }
 
-function stampClaim(state: GameState, actorPlayerId: string, claim: Claim, now: number): Claim {
+function stampClaim(
+  state: GameState,
+  actorPlayerId: string,
+  claim: Claim,
+  now: number,
+): Claim {
   const normalized = normalizeClaimShape(claim);
   const sequence = state.claimHistory.length + 1;
 
@@ -106,35 +143,53 @@ function stampClaim(state: GameState, actorPlayerId: string, claim: Claim, now: 
     id: normalized.id ?? claimId(state, sequence),
     sequence,
     playerId: actorPlayerId,
-    createdAt: now
+    createdAt: now,
   };
 }
 
 export function applySubmitClaim(
   state: GameState,
   envelope: ClientActionEnvelope<SubmitClaimPayload>,
-  now: number
+  now: number,
 ): ServerActionResult {
   const validationError = ensureTurnActionIsValid(state, envelope, now);
   if (validationError) return error(state, validationError);
 
-  if (state.currentClaim && !activeClaimWindowMatches(state, envelope.claimWindowId)) {
-    return error(state, state.activeClaimWindow?.status === "CLOSED" ? "CLAIM_WINDOW_CLOSED" : "STALE_CLAIM_WINDOW");
+  if (
+    state.currentClaim &&
+    !activeClaimWindowMatches(state, envelope.claimWindowId)
+  ) {
+    return error(
+      state,
+      state.activeClaimWindow?.status === "CLOSED"
+        ? "CLAIM_WINDOW_CLOSED"
+        : "STALE_CLAIM_WINDOW",
+    );
   }
 
   let submittedClaim: Claim;
   try {
-    submittedClaim = stampClaim(state, envelope.playerId, envelope.payload.claim, now);
+    submittedClaim = stampClaim(
+      state,
+      envelope.playerId,
+      envelope.payload.claim,
+      now,
+    );
     validateClaimShape(submittedClaim);
   } catch {
     return error(state, "INVALID_CLAIM_SHAPE");
   }
 
-  if (state.currentClaim && compareClaims(submittedClaim, state.currentClaim) !== 1) {
+  if (
+    state.currentClaim &&
+    compareClaims(submittedClaim, state.currentClaim) !== 1
+  ) {
     return error(state, "CLAIM_NOT_HIGHER");
   }
 
-  const isFinalClaim = Boolean(state.currentClaim && state.startingPlayerId === envelope.playerId);
+  const isFinalClaim = Boolean(
+    state.currentClaim && state.startingPlayerId === envelope.playerId,
+  );
   if (isFinalClaim) {
     try {
       const result = resolveFinalClaim(state, submittedClaim, now);
@@ -144,12 +199,16 @@ export function applySubmitClaim(
     }
   }
 
-  const nextTurnPlayerId = advanceToNextActivePlayer(state.players, envelope.playerId);
+  const nextTurnPlayerId = advanceToNextActivePlayer(
+    state.players,
+    envelope.playerId,
+  );
   if (!nextTurnPlayerId) {
     return error(state, "INTERNAL_ERROR");
   }
 
-  const nextTurnSequence = submittedClaim.sequence ?? state.claimHistory.length + 1;
+  const nextTurnSequence =
+    submittedClaim.sequence ?? state.claimHistory.length + 1;
   const nextTurnId = turnId(state, nextTurnPlayerId, nextTurnSequence);
 
   const nextState: GameState = {
@@ -162,13 +221,13 @@ export function applySubmitClaim(
       roundNumber: state.roundNumber,
       openedByClaimSequence: submittedClaim.sequence!,
       status: "OPEN",
-      openedAt: now
+      openedAt: now,
     },
     claimHistory: [...state.claimHistory, submittedClaim],
     currentTurnPlayerId: nextTurnPlayerId,
     currentTurnId: nextTurnId,
     turnStartedAt: now,
-    turnExpiresAt: now + state.turnDurationMs
+    turnExpiresAt: now + state.turnDurationMs,
   };
 
   return success(nextState);
@@ -177,14 +236,22 @@ export function applySubmitClaim(
 export function applyCallBullshit(
   state: GameState,
   envelope: ClientActionEnvelope<CallBullshitPayload>,
-  now: number
+  now: number,
 ): ServerActionResult {
   const validationError = ensureBaseActionIsValid(state, envelope);
   if (validationError) return error(state, validationError);
   if (!state.currentClaim) return error(state, "NO_CURRENT_CLAIM");
-  if (state.currentClaim.playerId === envelope.playerId) return error(state, "CLAIMANT_CANNOT_CALL");
+  if (state.currentClaim.playerId === envelope.playerId)
+    return error(state, "CLAIMANT_CANNOT_CALL");
+  if (state.turnExpiresAt !== undefined && now >= state.turnExpiresAt)
+    return error(state, "TURN_EXPIRED");
   if (!activeClaimWindowMatches(state, envelope.claimWindowId)) {
-    return error(state, state.activeClaimWindow?.status === "CLOSED" ? "CLAIM_WINDOW_CLOSED" : "STALE_CLAIM_WINDOW");
+    return error(
+      state,
+      state.activeClaimWindow?.status === "CLOSED"
+        ? "CLAIM_WINDOW_CLOSED"
+        : "STALE_CLAIM_WINDOW",
+    );
   }
 
   try {
@@ -195,7 +262,11 @@ export function applyCallBullshit(
   }
 }
 
-export function applyTimeout(state: GameState, turnIdToExpire: string, now: number): ServerActionResult {
+export function applyTimeout(
+  state: GameState,
+  turnIdToExpire: string,
+  now: number,
+): ServerActionResult {
   if (state.phase !== "RoundActive") {
     return error(state, "ROUND_ALREADY_RESOLVED");
   }

@@ -11,10 +11,11 @@ import {
   generateRoomCode,
   joinRoom,
   removeBotFromRoom,
+  removePlayerFromRoom,
   startGame,
   type GameState,
   type PlayerState,
-  type RoomIdentityProvider
+  type RoomIdentityProvider,
 } from "../../src/shared/index.ts";
 
 function identityProvider(): RoomIdentityProvider {
@@ -34,11 +35,13 @@ function identityProvider(): RoomIdentityProvider {
       return `verifier:${playerId}:${pin.split("").reverse().join("")}`;
     },
     verifyPin(pin, verifier, playerId) {
-      return verifier === `verifier:${playerId}:${pin.split("").reverse().join("")}`;
+      return (
+        verifier === `verifier:${playerId}:${pin.split("").reverse().join("")}`
+      );
     },
     hashReconnectToken(token, playerId) {
       return `token-hash:${playerId}:${token}`;
-    }
+    },
   };
 }
 
@@ -49,7 +52,7 @@ function createHostRoom(identity = identityProvider()) {
     hostName: "Jaswanth",
     pin: "1234",
     now: 100,
-    identity
+    identity,
   });
 
   assert.equal(result.ok, true);
@@ -59,7 +62,7 @@ function createHostRoom(identity = identityProvider()) {
 function resolvedPlayer(
   id: string,
   seatIndex: number,
-  options: { cardCount?: number; eliminated?: boolean; leftAt?: number } = {}
+  options: { cardCount?: number; eliminated?: boolean; leftAt?: number } = {},
 ): PlayerState {
   return {
     id,
@@ -72,11 +75,14 @@ function resolvedPlayer(
     connected: true,
     isBot: false,
     leftAt: options.leftAt,
-    roundCards: [createCard("2", "S")]
+    roundCards: [createCard("2", "S")],
   };
 }
 
-function resolvingState(players: PlayerState[], overrides: Partial<GameState> = {}): GameState {
+function resolvingState(
+  players: PlayerState[],
+  overrides: Partial<GameState> = {},
+): GameState {
   return {
     roomId: "room-1",
     code: "ABC123",
@@ -90,9 +96,17 @@ function resolvingState(players: PlayerState[], overrides: Partial<GameState> = 
     currentTurnId: undefined,
     currentClaim: undefined,
     activeClaimWindow: undefined,
-    claimHistory: [{ id: "claim-1", handType: "HIGH_CARD", primaryRank: "K", playerId: "C", sequence: 1 }],
+    claimHistory: [
+      {
+        id: "claim-1",
+        handType: "HIGH_CARD",
+        primaryRank: "K",
+        playerId: "C",
+        sequence: 1,
+      },
+    ],
     turnDurationMs: 120000,
-    ...overrides
+    ...overrides,
   };
 }
 
@@ -127,10 +141,14 @@ test("createRoomWithHost rejects invalid PIN format", () => {
     hostName: "Jaswanth",
     pin: "12A4",
     now: 100,
-    identity: identityProvider()
+    identity: identityProvider(),
   });
 
-  assert.deepEqual(result, { ok: false, code: "INVALID_PIN_FORMAT", latestStateRevision: 0 });
+  assert.deepEqual(result, {
+    ok: false,
+    code: "INVALID_PIN_FORMAT",
+    latestStateRevision: 0,
+  });
 });
 
 test("joinRoom adds a new player in lobby", () => {
@@ -138,7 +156,12 @@ test("joinRoom adds a new player in lobby", () => {
   const host = createHostRoom(identity);
   if (!host.ok) return;
 
-  const joined = joinRoom(host.state, { name: "Friend", pin: "5678", now: 200, identity });
+  const joined = joinRoom(host.state, {
+    name: "Friend",
+    pin: "5678",
+    now: 200,
+    identity,
+  });
 
   assert.equal(joined.ok, true);
   if (!joined.ok) return;
@@ -156,9 +179,18 @@ test("joinRoom rejects duplicate normalized name with wrong PIN", () => {
   const host = createHostRoom(identity);
   if (!host.ok) return;
 
-  const result = joinRoom(host.state, { name: " jaswanth ", pin: "9999", now: 200, identity });
+  const result = joinRoom(host.state, {
+    name: " jaswanth ",
+    pin: "9999",
+    now: 200,
+    identity,
+  });
 
-  assert.deepEqual(result, { ok: false, code: "PIN_MISMATCH", latestStateRevision: host.state.stateRevision });
+  assert.deepEqual(result, {
+    ok: false,
+    code: "PIN_MISMATCH",
+    latestStateRevision: host.state.stateRevision,
+  });
 });
 
 test("joinRoom reclaims existing seat with same normalized name and correct PIN", () => {
@@ -166,7 +198,12 @@ test("joinRoom reclaims existing seat with same normalized name and correct PIN"
   const host = createHostRoom(identity);
   if (!host.ok) return;
 
-  const result = joinRoom(host.state, { name: " jaswanth ", pin: "1234", now: 200, identity });
+  const result = joinRoom(host.state, {
+    name: " jaswanth ",
+    pin: "1234",
+    now: 200,
+    identity,
+  });
 
   assert.equal(result.ok, true);
   if (!result.ok) return;
@@ -186,7 +223,7 @@ test("addBotToRoom adds a host-controlled bot seat without player credentials", 
   const added = addBotToRoom(host.state, {
     hostPlayerId: "player-1",
     now: 200,
-    identity
+    identity,
   });
 
   assert.equal(added.ok, true);
@@ -204,31 +241,57 @@ test("addBotToRoom enforces host-only, lobby-only, and unique names", () => {
   const host = createHostRoom(identity);
   if (!host.ok) return;
 
-  assert.deepEqual(addBotToRoom(host.state, { hostPlayerId: "player-2", now: 200, identity }), {
-    ok: false,
-    code: "NOT_HOST",
-    latestStateRevision: host.state.stateRevision
-  });
+  assert.deepEqual(
+    addBotToRoom(host.state, { hostPlayerId: "player-2", now: 200, identity }),
+    {
+      ok: false,
+      code: "NOT_HOST",
+      latestStateRevision: host.state.stateRevision,
+    },
+  );
 
-  assert.deepEqual(addBotToRoom(host.state, { hostPlayerId: "player-1", name: " jaswanth ", now: 200, identity }), {
-    ok: false,
-    code: "NAME_TAKEN",
-    latestStateRevision: host.state.stateRevision
-  });
+  assert.deepEqual(
+    addBotToRoom(host.state, {
+      hostPlayerId: "player-1",
+      name: " jaswanth ",
+      now: 200,
+      identity,
+    }),
+    {
+      ok: false,
+      code: "NAME_TAKEN",
+      latestStateRevision: host.state.stateRevision,
+    },
+  );
 
-  const added = addBotToRoom(host.state, { hostPlayerId: "player-1", now: 200, identity });
+  const added = addBotToRoom(host.state, {
+    hostPlayerId: "player-1",
+    now: 200,
+    identity,
+  });
   assert.equal(added.ok, true);
   if (!added.ok) return;
 
-  const started = startGame(added.state, { hostPlayerId: "player-1", now: 300, rng: () => 0 });
+  const started = startGame(added.state, {
+    hostPlayerId: "player-1",
+    now: 300,
+    rng: () => 0,
+  });
   assert.equal(started.ok, true);
   if (!started.ok) return;
 
-  assert.deepEqual(addBotToRoom(started.state, { hostPlayerId: "player-1", now: 400, identity }), {
-    ok: false,
-    code: "GAME_ALREADY_STARTED",
-    latestStateRevision: started.state.stateRevision
-  });
+  assert.deepEqual(
+    addBotToRoom(started.state, {
+      hostPlayerId: "player-1",
+      now: 400,
+      identity,
+    }),
+    {
+      ok: false,
+      code: "GAME_ALREADY_STARTED",
+      latestStateRevision: started.state.stateRevision,
+    },
+  );
 });
 
 test("startGame rejects non-host and rooms with fewer than two players", () => {
@@ -236,53 +299,164 @@ test("startGame rejects non-host and rooms with fewer than two players", () => {
   const host = createHostRoom(identity);
   if (!host.ok) return;
 
-  assert.deepEqual(startGame(host.state, { hostPlayerId: "player-2", now: 300, rng: () => 0 }), {
-    ok: false,
-    code: "NOT_HOST",
-    latestStateRevision: host.state.stateRevision
-  });
-  assert.deepEqual(startGame(host.state, { hostPlayerId: "player-1", now: 300, rng: () => 0 }), {
-    ok: false,
-    code: "NOT_ENOUGH_PLAYERS",
-    latestStateRevision: host.state.stateRevision
-  });
+  assert.deepEqual(
+    startGame(host.state, { hostPlayerId: "player-2", now: 300, rng: () => 0 }),
+    {
+      ok: false,
+      code: "NOT_HOST",
+      latestStateRevision: host.state.stateRevision,
+    },
+  );
+  assert.deepEqual(
+    startGame(host.state, { hostPlayerId: "player-1", now: 300, rng: () => 0 }),
+    {
+      ok: false,
+      code: "NOT_ENOUGH_PLAYERS",
+      latestStateRevision: host.state.stateRevision,
+    },
+  );
 });
 
-test("removeBotFromRoom lets the host remove only bot seats in the lobby", () => {
+test("removePlayerFromRoom lets the host remove any non-host seat in the lobby", () => {
   const identity = identityProvider();
   const host = createHostRoom(identity);
   if (!host.ok) return;
 
-  const added = addBotToRoom(host.state, { hostPlayerId: "player-1", now: 200, identity });
+  const joined = joinRoom(host.state, {
+    name: "Friend",
+    pin: "5678",
+    now: 200,
+    identity,
+  });
+  assert.equal(joined.ok, true);
+  if (!joined.ok) return;
+
+  const removed = removePlayerFromRoom(joined.state, {
+    hostPlayerId: "player-1",
+    targetPlayerId: "player-2",
+    now: 250,
+  });
+  assert.equal(removed.ok, true);
+  if (!removed.ok) return;
+  assert.equal(
+    removed.state.players.some((player) => player.id === "player-2"),
+    false,
+  );
+  assert.equal(
+    removed.state.playerCredentials?.some(
+      (credential) => credential.playerId === "player-2",
+    ),
+    false,
+  );
+
+  assert.deepEqual(
+    removePlayerFromRoom(joined.state, {
+      hostPlayerId: "player-2",
+      targetPlayerId: "player-2",
+      now: 250,
+    }),
+    {
+      ok: false,
+      code: "NOT_HOST",
+      latestStateRevision: joined.state.stateRevision,
+    },
+  );
+
+  assert.deepEqual(
+    removePlayerFromRoom(joined.state, {
+      hostPlayerId: "player-1",
+      targetPlayerId: "player-1",
+      now: 250,
+    }),
+    {
+      ok: false,
+      code: "CANNOT_REMOVE_HOST",
+      latestStateRevision: joined.state.stateRevision,
+    },
+  );
+
+  assert.deepEqual(
+    removePlayerFromRoom(joined.state, {
+      hostPlayerId: "player-1",
+      targetPlayerId: "missing",
+      now: 250,
+    }),
+    {
+      ok: false,
+      code: "PLAYER_NOT_FOUND",
+      latestStateRevision: joined.state.stateRevision,
+    },
+  );
+});
+
+test("removeBotFromRoom keeps the compatibility bot-only contract", () => {
+  const identity = identityProvider();
+  const host = createHostRoom(identity);
+  if (!host.ok) return;
+
+  const added = addBotToRoom(host.state, {
+    hostPlayerId: "player-1",
+    now: 200,
+    identity,
+  });
   assert.equal(added.ok, true);
   if (!added.ok) return;
 
-  const removed = removeBotFromRoom(added.state, { hostPlayerId: "player-1", botPlayerId: "player-2", now: 250 });
+  const removed = removeBotFromRoom(added.state, {
+    hostPlayerId: "player-1",
+    botPlayerId: "player-2",
+    now: 250,
+  });
   assert.equal(removed.ok, true);
   if (!removed.ok) return;
   assert.equal(removed.state.players.length, 1);
   assert.equal(removed.state.players[0].id, "player-1");
 
-  assert.deepEqual(removeBotFromRoom(added.state, { hostPlayerId: "player-2", botPlayerId: "player-2", now: 250 }), {
-    ok: false,
-    code: "NOT_HOST",
-    latestStateRevision: added.state.stateRevision
-  });
+  assert.deepEqual(
+    removeBotFromRoom(added.state, {
+      hostPlayerId: "player-2",
+      botPlayerId: "player-2",
+      now: 250,
+    }),
+    {
+      ok: false,
+      code: "NOT_HOST",
+      latestStateRevision: added.state.stateRevision,
+    },
+  );
 
-  assert.deepEqual(removeBotFromRoom(added.state, { hostPlayerId: "player-1", botPlayerId: "player-1", now: 250 }), {
-    ok: false,
-    code: "BOT_NOT_FOUND",
-    latestStateRevision: added.state.stateRevision
-  });
+  assert.deepEqual(
+    removeBotFromRoom(added.state, {
+      hostPlayerId: "player-1",
+      botPlayerId: "player-1",
+      now: 250,
+    }),
+    {
+      ok: false,
+      code: "BOT_NOT_FOUND",
+      latestStateRevision: added.state.stateRevision,
+    },
+  );
 
-  const started = startGame(added.state, { hostPlayerId: "player-1", now: 300, rng: () => 0 });
+  const started = startGame(added.state, {
+    hostPlayerId: "player-1",
+    now: 300,
+    rng: () => 0,
+  });
   assert.equal(started.ok, true);
   if (!started.ok) return;
-  assert.deepEqual(removeBotFromRoom(started.state, { hostPlayerId: "player-1", botPlayerId: "player-2", now: 350 }), {
-    ok: false,
-    code: "GAME_ALREADY_STARTED",
-    latestStateRevision: started.state.stateRevision
-  });
+  assert.deepEqual(
+    removeBotFromRoom(started.state, {
+      hostPlayerId: "player-1",
+      botPlayerId: "player-2",
+      now: 350,
+    }),
+    {
+      ok: false,
+      code: "GAME_ALREADY_STARTED",
+      latestStateRevision: started.state.stateRevision,
+    },
+  );
 });
 
 test("startGame deals one card to each player and starts with host seat 0", () => {
@@ -290,11 +464,20 @@ test("startGame deals one card to each player and starts with host seat 0", () =
   const host = createHostRoom(identity);
   if (!host.ok) return;
 
-  const joined = joinRoom(host.state, { name: "Friend", pin: "5678", now: 200, identity });
+  const joined = joinRoom(host.state, {
+    name: "Friend",
+    pin: "5678",
+    now: 200,
+    identity,
+  });
   assert.equal(joined.ok, true);
   if (!joined.ok) return;
 
-  const started = startGame(joined.state, { hostPlayerId: "player-1", now: 300, rng: () => 0 });
+  const started = startGame(joined.state, {
+    hostPlayerId: "player-1",
+    now: 300,
+    rng: () => 0,
+  });
 
   assert.equal(started.ok, true);
   if (!started.ok) return;
@@ -307,8 +490,14 @@ test("startGame deals one card to each player and starts with host seat 0", () =
   assert.equal(started.state.activeClaimWindow, undefined);
   assert.equal(started.state.turnStartedAt, 300);
   assert.equal(started.state.turnExpiresAt, 120300);
-  assert.equal(started.state.players.every((player) => player.roundCards.length === 1), true);
-  assert.notEqual(started.state.players[0].roundCards[0].id, started.state.players[1].roundCards[0].id);
+  assert.equal(
+    started.state.players.every((player) => player.roundCards.length === 1),
+    true,
+  );
+  assert.notEqual(
+    started.state.players[0].roundCards[0].id,
+    started.state.players[1].roundCards[0].id,
+  );
 });
 
 test("connectPlayer validates reconnect token and marks player connected", () => {
@@ -317,7 +506,10 @@ test("connectPlayer validates reconnect token and marks player connected", () =>
   assert.equal(host.ok, true);
   if (!host.ok) return;
 
-  const disconnected = disconnectPlayer(host.state, { playerId: "player-1", now: 150 });
+  const disconnected = disconnectPlayer(host.state, {
+    playerId: "player-1",
+    now: 150,
+  });
   assert.equal(disconnected.ok, true);
   if (!disconnected.ok) return;
   assert.equal(disconnected.state.players[0].connected, false);
@@ -326,19 +518,19 @@ test("connectPlayer validates reconnect token and marks player connected", () =>
     playerId: "player-1",
     reconnectToken: "wrong-token",
     now: 200,
-    identity
+    identity,
   });
   assert.deepEqual(rejected, {
     ok: false,
     code: "RECONNECT_TOKEN_INVALID",
-    latestStateRevision: disconnected.state.stateRevision
+    latestStateRevision: disconnected.state.stateRevision,
   });
 
   const connected = connectPlayer(disconnected.state, {
     playerId: "player-1",
     reconnectToken: host.reconnectToken!,
     now: 250,
-    identity
+    identity,
   });
 
   assert.equal(connected.ok, true);
@@ -351,7 +543,7 @@ test("advanceToNextRound deals new cards and rotates clockwise from previous sta
   const state = resolvingState([
     resolvedPlayer("A", 0),
     resolvedPlayer("B", 1, { cardCount: 2 }),
-    resolvedPlayer("C", 2)
+    resolvedPlayer("C", 2),
   ]);
 
   const result = advanceToNextRound(state, { now: 1_000, rng: () => 0 });
@@ -364,7 +556,10 @@ test("advanceToNextRound deals new cards and rotates clockwise from previous sta
   assert.equal(result.state.currentTurnPlayerId, "B");
   assert.equal(result.state.currentTurnId, "room-1:round:3:turn:B:0");
   assert.equal(result.state.claimHistory.length, 0);
-  assert.equal(result.state.players.find((player) => player.id === "B")?.roundCards.length, 2);
+  assert.equal(
+    result.state.players.find((player) => player.id === "B")?.roundCards.length,
+    2,
+  );
   assert.equal(result.state.turnStartedAt, 1_000);
   assert.equal(result.state.turnExpiresAt, 121_000);
 });
@@ -374,9 +569,9 @@ test("advanceToNextRound skips eliminated and voluntary-leaver seats", () => {
     resolvingState([
       resolvedPlayer("A", 0),
       resolvedPlayer("B", 1, { eliminated: true, cardCount: 6 }),
-      resolvedPlayer("C", 2)
+      resolvedPlayer("C", 2),
     ]),
-    { now: 1_000, rng: () => 0 }
+    { now: 1_000, rng: () => 0 },
   );
   assert.equal(bEliminated.ok && bEliminated.state.startingPlayerId, "C");
 
@@ -384,9 +579,9 @@ test("advanceToNextRound skips eliminated and voluntary-leaver seats", () => {
     resolvingState([
       resolvedPlayer("A", 0, { eliminated: true, cardCount: 6 }),
       resolvedPlayer("B", 1),
-      resolvedPlayer("C", 2)
+      resolvedPlayer("C", 2),
     ]),
-    { now: 1_000, rng: () => 0 }
+    { now: 1_000, rng: () => 0 },
   );
   assert.equal(aEliminated.ok && aEliminated.state.startingPlayerId, "B");
 
@@ -394,20 +589,23 @@ test("advanceToNextRound skips eliminated and voluntary-leaver seats", () => {
     resolvingState([
       resolvedPlayer("A", 0),
       resolvedPlayer("B", 1, { leftAt: 900 }),
-      resolvedPlayer("C", 2)
+      resolvedPlayer("C", 2),
     ]),
-    { now: 1_000, rng: () => 0 }
+    { now: 1_000, rng: () => 0 },
   );
   assert.equal(bLeft.ok && bLeft.state.startingPlayerId, "C");
 });
 
 test("advanceToNextRound rejects rooms that are not waiting after a resolved round", () => {
-  const state = resolvingState([resolvedPlayer("A", 0), resolvedPlayer("B", 1)], { phase: "RoundActive" });
+  const state = resolvingState(
+    [resolvedPlayer("A", 0), resolvedPlayer("B", 1)],
+    { phase: "RoundActive" },
+  );
   const result = advanceToNextRound(state, { now: 1_000, rng: () => 0 });
 
   assert.deepEqual(result, {
     ok: false,
     code: "ROUND_NOT_RESOLVED",
-    latestStateRevision: state.stateRevision
+    latestStateRevision: state.stateRevision,
   });
 });

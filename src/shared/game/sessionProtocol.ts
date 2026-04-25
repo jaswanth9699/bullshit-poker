@@ -3,7 +3,7 @@ import type { PrivateGameView } from "./views.ts";
 import type {
   CallBullshitPayload,
   ClientActionEnvelope,
-  SubmitClaimPayload
+  SubmitClaimPayload,
 } from "./protocol.ts";
 import type { RoundResult } from "./gameTypes.ts";
 
@@ -40,6 +40,12 @@ export type RemoveBotClientMessage = {
   botPlayerId: string;
 };
 
+export type RemovePlayerClientMessage = {
+  type: "REMOVE_PLAYER";
+  requestId: string;
+  targetPlayerId: string;
+};
+
 export type StartGameClientMessage = {
   type: "START_GAME";
   requestId: string;
@@ -62,6 +68,7 @@ export type RoomClientMessage =
   | RequestSyncClientMessage
   | AddBotClientMessage
   | RemoveBotClientMessage
+  | RemovePlayerClientMessage
   | StartGameClientMessage
   | StartNextRoundClientMessage
   | ClientPingMessage;
@@ -83,6 +90,7 @@ export type RoomUpdatedReason =
   | "CONNECTED"
   | "DISCONNECTED"
   | "ACTION_ACCEPTED"
+  | "TURN_TIMEOUT"
   | "AUTO_NEXT_ROUND"
   | "SYNC_REQUESTED";
 

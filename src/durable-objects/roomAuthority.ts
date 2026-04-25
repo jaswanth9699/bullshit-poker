@@ -8,7 +8,7 @@ import {
   createRoomWithHost,
   disconnectPlayer,
   joinRoom,
-  removeBotFromRoom,
+  removePlayerFromRoom,
   startGame,
   type CallBullshitPayload,
   type AddBotInput,
@@ -17,12 +17,12 @@ import {
   type GameState,
   type JoinRoomInput,
   type LifecycleResult,
-  type RemoveBotInput,
+  type RemovePlayerInput,
   type Rng,
   type RoomIdentityProvider,
   type ServerActionResult,
   type StartGameInput,
-  type SubmitClaimPayload
+  type SubmitClaimPayload,
 } from "../shared/index.ts";
 
 export interface RoomStateStore {
@@ -55,7 +55,7 @@ export class RoomAuthority {
       return {
         ok: false,
         code: "GAME_ALREADY_STARTED",
-        latestStateRevision: existingState.stateRevision
+        latestStateRevision: existingState.stateRevision,
       };
     }
 
@@ -74,36 +74,57 @@ export class RoomAuthority {
     return this.applyLifecycle((state) => addBotToRoom(state, input));
   }
 
-  async removeBot(input: RemoveBotInput): Promise<LifecycleResult> {
-    return this.applyLifecycle((state) => removeBotFromRoom(state, input));
+  async removePlayer(input: RemovePlayerInput): Promise<LifecycleResult> {
+    return this.applyLifecycle((state) => removePlayerFromRoom(state, input));
   }
 
-  async startGame(hostPlayerId: string, now: number, rng: Rng): Promise<LifecycleResult> {
-    return this.applyLifecycle((state) => startGame(state, { hostPlayerId, now, rng }));
+  async startGame(
+    hostPlayerId: string,
+    now: number,
+    rng: Rng,
+  ): Promise<LifecycleResult> {
+    return this.applyLifecycle((state) =>
+      startGame(state, { hostPlayerId, now, rng }),
+    );
   }
 
   async connectPlayer(
     playerId: string,
     reconnectToken: string,
     identity: RoomIdentityProvider,
-    now: number
+    now: number,
   ): Promise<LifecycleResult> {
-    return this.applyLifecycle((state) => connectPlayer(state, { playerId, reconnectToken, identity, now }));
+    return this.applyLifecycle((state) =>
+      connectPlayer(state, { playerId, reconnectToken, identity, now }),
+    );
   }
 
-  async disconnectPlayer(playerId: string, now: number): Promise<LifecycleResult> {
-    return this.applyLifecycle((state) => disconnectPlayer(state, { playerId, now }));
+  async disconnectPlayer(
+    playerId: string,
+    now: number,
+  ): Promise<LifecycleResult> {
+    return this.applyLifecycle((state) =>
+      disconnectPlayer(state, { playerId, now }),
+    );
   }
 
   async advanceToNextRound(now: number, rng: Rng): Promise<LifecycleResult> {
-    return this.applyLifecycle((state) => advanceToNextRound(state, { now, rng }));
+    return this.applyLifecycle((state) =>
+      advanceToNextRound(state, { now, rng }),
+    );
   }
 
-  async submitClaim(envelope: ClientActionEnvelope<SubmitClaimPayload>, now: number): Promise<ServerActionResult> {
+  async submitClaim(
+    envelope: ClientActionEnvelope<SubmitClaimPayload>,
+    now: number,
+  ): Promise<ServerActionResult> {
     return this.apply((state) => applySubmitClaim(state, envelope, now));
   }
 
-  async callBullshit(envelope: ClientActionEnvelope<CallBullshitPayload>, now: number): Promise<ServerActionResult> {
+  async callBullshit(
+    envelope: ClientActionEnvelope<CallBullshitPayload>,
+    now: number,
+  ): Promise<ServerActionResult> {
     return this.apply((state) => applyCallBullshit(state, envelope, now));
   }
 
@@ -111,13 +132,15 @@ export class RoomAuthority {
     return this.apply((state) => applyTimeout(state, turnId, now));
   }
 
-  private async apply(reducer: (state: GameState) => ServerActionResult): Promise<ServerActionResult> {
+  private async apply(
+    reducer: (state: GameState) => ServerActionResult,
+  ): Promise<ServerActionResult> {
     const state = await this.store.getState();
     if (!state) {
       return {
         ok: false,
         code: "ROOM_NOT_FOUND",
-        latestStateRevision: 0
+        latestStateRevision: 0,
       };
     }
 
@@ -129,13 +152,15 @@ export class RoomAuthority {
     return result;
   }
 
-  private async applyLifecycle(reducer: (state: GameState) => LifecycleResult): Promise<LifecycleResult> {
+  private async applyLifecycle(
+    reducer: (state: GameState) => LifecycleResult,
+  ): Promise<LifecycleResult> {
     const state = await this.store.getState();
     if (!state) {
       return {
         ok: false,
         code: "ROOM_NOT_FOUND",
-        latestStateRevision: 0
+        latestStateRevision: 0,
       };
     }
 

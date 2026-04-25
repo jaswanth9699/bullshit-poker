@@ -10,10 +10,14 @@ import {
   type GameState,
   type PlayerState,
   type SubmitClaimPayload,
-  type CallBullshitPayload
+  type CallBullshitPayload,
 } from "../../src/shared/index.ts";
 
-function player(id: string, seatIndex: number, cards: PlayerState["roundCards"]): PlayerState {
+function player(
+  id: string,
+  seatIndex: number,
+  cards: PlayerState["roundCards"],
+): PlayerState {
   return {
     id,
     name: id,
@@ -24,12 +28,18 @@ function player(id: string, seatIndex: number, cards: PlayerState["roundCards"])
     eliminated: false,
     connected: true,
     isBot: false,
-    roundCards: cards
+    roundCards: cards,
   };
 }
 
 function stateWithClaim(overrides: Partial<GameState> = {}): GameState {
-  const currentClaim = { id: "claim-1", handType: "PAIR" as const, primaryRank: "K" as const, playerId: "A", sequence: 1 };
+  const currentClaim = {
+    id: "claim-1",
+    handType: "PAIR" as const,
+    primaryRank: "K" as const,
+    playerId: "A",
+    sequence: 1,
+  };
 
   return {
     roomId: "room-1",
@@ -40,7 +50,7 @@ function stateWithClaim(overrides: Partial<GameState> = {}): GameState {
     players: [
       player("A", 0, [createCard("K", "S")]),
       player("B", 1, [createCard("A", "H")]),
-      player("C", 2, [createCard("2", "D")])
+      player("C", 2, [createCard("2", "D")]),
     ],
     roundNumber: 2,
     startingPlayerId: "A",
@@ -53,13 +63,13 @@ function stateWithClaim(overrides: Partial<GameState> = {}): GameState {
       roundNumber: 2,
       openedByClaimSequence: 1,
       status: "OPEN",
-      openedAt: 100
+      openedAt: 100,
     },
     claimHistory: [currentClaim],
     turnStartedAt: 100,
     turnExpiresAt: 120100,
     turnDurationMs: 120000,
-    ...overrides
+    ...overrides,
   };
 }
 
@@ -67,7 +77,7 @@ function submitEnvelope(
   state: GameState,
   playerId: string,
   payload: SubmitClaimPayload,
-  overrides: Partial<ClientActionEnvelope<SubmitClaimPayload>> = {}
+  overrides: Partial<ClientActionEnvelope<SubmitClaimPayload>> = {},
 ): ClientActionEnvelope<SubmitClaimPayload> {
   return {
     requestId: `req-${playerId}`,
@@ -77,14 +87,14 @@ function submitEnvelope(
     turnId: state.currentTurnId,
     claimWindowId: state.activeClaimWindow?.id,
     payload,
-    ...overrides
+    ...overrides,
   };
 }
 
 function callEnvelope(
   state: GameState,
   playerId: string,
-  overrides: Partial<ClientActionEnvelope<CallBullshitPayload>> = {}
+  overrides: Partial<ClientActionEnvelope<CallBullshitPayload>> = {},
 ): ClientActionEnvelope<CallBullshitPayload> {
   return {
     requestId: `call-${playerId}`,
@@ -93,7 +103,7 @@ function callEnvelope(
     stateRevision: state.stateRevision,
     claimWindowId: state.activeClaimWindow?.id,
     payload: {},
-    ...overrides
+    ...overrides,
   };
 }
 
@@ -101,8 +111,10 @@ test("submit claim advances turn, opens new claim window, and resets 120s timer"
   const state = stateWithClaim();
   const result = applySubmitClaim(
     state,
-    submitEnvelope(state, "B", { claim: { handType: "PAIR", primaryRank: "A" } }),
-    1_000
+    submitEnvelope(state, "B", {
+      claim: { handType: "PAIR", primaryRank: "A" },
+    }),
+    1_000,
   );
 
   assert.equal(result.ok, true);
@@ -110,26 +122,40 @@ test("submit claim advances turn, opens new claim window, and resets 120s timer"
   assert.equal(result.ok && result.state.currentTurnPlayerId, "C");
   assert.equal(result.ok && result.state.activeClaimWindow?.status, "OPEN");
   assert.equal(result.ok && result.state.turnExpiresAt, 121_000);
-  assert.equal(result.ok && result.state.stateRevision, state.stateRevision + 1);
+  assert.equal(
+    result.ok && result.state.stateRevision,
+    state.stateRevision + 1,
+  );
 });
 
 test("submit claim rejects stale state revision", () => {
   const state = stateWithClaim();
   const result = applySubmitClaim(
     state,
-    submitEnvelope(state, "B", { claim: { handType: "PAIR", primaryRank: "A" } }, { stateRevision: 6 }),
-    1_000
+    submitEnvelope(
+      state,
+      "B",
+      { claim: { handType: "PAIR", primaryRank: "A" } },
+      { stateRevision: 6 },
+    ),
+    1_000,
   );
 
-  assert.deepEqual(result, { ok: false, code: "STALE_STATE_REVISION", latestStateRevision: 7 });
+  assert.deepEqual(result, {
+    ok: false,
+    code: "STALE_STATE_REVISION",
+    latestStateRevision: 7,
+  });
 });
 
 test("submit claim rejects lower/equal claim", () => {
   const state = stateWithClaim();
   const result = applySubmitClaim(
     state,
-    submitEnvelope(state, "B", { claim: { handType: "PAIR", primaryRank: "Q" } }),
-    1_000
+    submitEnvelope(state, "B", {
+      claim: { handType: "PAIR", primaryRank: "Q" },
+    }),
+    1_000,
   );
 
   assert.equal(result.ok, false);
@@ -141,8 +167,10 @@ test("next claim accepted first makes old BullShit call stale", () => {
   const oldWindowId = state.activeClaimWindow!.id;
   const claimResult = applySubmitClaim(
     state,
-    submitEnvelope(state, "B", { claim: { handType: "PAIR", primaryRank: "A" } }),
-    1_000
+    submitEnvelope(state, "B", {
+      claim: { handType: "PAIR", primaryRank: "A" },
+    }),
+    1_000,
   );
   assert.equal(claimResult.ok, true);
 
@@ -150,7 +178,7 @@ test("next claim accepted first makes old BullShit call stale", () => {
   const callResult = applyCallBullshit(
     nextState,
     callEnvelope(nextState, "C", { claimWindowId: oldWindowId }),
-    1_010
+    1_010,
   );
 
   assert.equal(callResult.ok, false);
@@ -165,8 +193,10 @@ test("BullShit call accepted first makes next claim stale through resolved round
   const resolvedState = callResult.ok ? callResult.state : state;
   const claimResult = applySubmitClaim(
     resolvedState,
-    submitEnvelope(state, "B", { claim: { handType: "PAIR", primaryRank: "A" } }),
-    1_010
+    submitEnvelope(state, "B", {
+      claim: { handType: "PAIR", primaryRank: "A" },
+    }),
+    1_010,
   );
 
   assert.equal(claimResult.ok, false);
@@ -188,24 +218,29 @@ test("final claim accepted first resolves round and rejects old BullShit call", 
     players: [
       player("A", 0, [createCard("A", "S")]),
       player("B", 1, [createCard("A", "H")]),
-      player("C", 2, [createCard("2", "D")])
-    ]
+      player("C", 2, [createCard("2", "D")]),
+    ],
   });
   const oldWindowId = state.activeClaimWindow!.id;
 
   const finalResult = applySubmitClaim(
     state,
-    submitEnvelope(state, "A", { claim: { handType: "PAIR", primaryRank: "A" } }),
-    1_000
+    submitEnvelope(state, "A", {
+      claim: { handType: "PAIR", primaryRank: "A" },
+    }),
+    1_000,
   );
   assert.equal(finalResult.ok, true);
-  assert.equal(finalResult.ok && finalResult.roundResult?.reason, "FINAL_CLAIM");
+  assert.equal(
+    finalResult.ok && finalResult.roundResult?.reason,
+    "FINAL_CLAIM",
+  );
 
   const resolvedState = finalResult.ok ? finalResult.state : state;
   const callResult = applyCallBullshit(
     resolvedState,
     callEnvelope(resolvedState, "C", { claimWindowId: oldWindowId }),
-    1_010
+    1_010,
   );
 
   assert.equal(callResult.ok, false);
@@ -217,13 +252,18 @@ test("timeout accepted first resolves round and later action is stale", () => {
   const timeoutResult = applyTimeout(state, state.currentTurnId!, 1_000);
 
   assert.equal(timeoutResult.ok, true);
-  assert.equal(timeoutResult.ok && timeoutResult.roundResult?.reason, "TIMEOUT");
+  assert.equal(
+    timeoutResult.ok && timeoutResult.roundResult?.reason,
+    "TIMEOUT",
+  );
 
   const resolvedState = timeoutResult.ok ? timeoutResult.state : state;
   const claimResult = applySubmitClaim(
     resolvedState,
-    submitEnvelope(state, "B", { claim: { handType: "PAIR", primaryRank: "A" } }),
-    1_001
+    submitEnvelope(state, "B", {
+      claim: { handType: "PAIR", primaryRank: "A" },
+    }),
+    1_001,
   );
 
   assert.equal(claimResult.ok, false);
@@ -234,9 +274,19 @@ test("claim submitted at or after expiry is rejected as expired", () => {
   const state = stateWithClaim({ turnExpiresAt: 1_000 });
   const result = applySubmitClaim(
     state,
-    submitEnvelope(state, "B", { claim: { handType: "PAIR", primaryRank: "A" } }),
-    1_000
+    submitEnvelope(state, "B", {
+      claim: { handType: "PAIR", primaryRank: "A" },
+    }),
+    1_000,
   );
+
+  assert.equal(result.ok, false);
+  assert.equal(!result.ok && result.code, "TURN_EXPIRED");
+});
+
+test("bullshit call at or after expiry is rejected so timeout can resolve first", () => {
+  const state = stateWithClaim({ turnExpiresAt: 1_000 });
+  const result = applyCallBullshit(state, callEnvelope(state, "C"), 1_000);
 
   assert.equal(result.ok, false);
   assert.equal(!result.ok && result.code, "TURN_EXPIRED");

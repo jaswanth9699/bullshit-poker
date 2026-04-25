@@ -11,6 +11,8 @@ export const SERVER_ERROR_CODES = [
   "PLAYER_SESSION_MISMATCH",
   "NOT_HOST",
   "BOT_NOT_FOUND",
+  "PLAYER_NOT_FOUND",
+  "CANNOT_REMOVE_HOST",
   "NOT_CURRENT_TURN",
   "PLAYER_ELIMINATED",
   "NO_CURRENT_CLAIM",
@@ -26,7 +28,7 @@ export const SERVER_ERROR_CODES = [
   "TURN_EXPIRED",
   "ROOM_CLOSED",
   "INVALID_MESSAGE",
-  "INTERNAL_ERROR"
+  "INTERNAL_ERROR",
 ] as const;
 
 export type ServerErrorCode = (typeof SERVER_ERROR_CODES)[number];

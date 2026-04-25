@@ -1,8 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Bot,
+  Check,
   CircleAlert,
   Clock3,
+  Copy,
+  DoorOpen,
   Eye,
   Layers,
   LogIn,
@@ -12,8 +15,9 @@ import {
   ShieldAlert,
   Sparkles,
   Trash2,
+  Trophy,
   UsersRound,
-  X
+  X,
 } from "lucide-react";
 import {
   addBotHttp,
@@ -21,12 +25,12 @@ import {
   connectRoomSocket,
   createRoom,
   joinRoom,
-  removeBotHttp,
+  removePlayerHttp,
   sendRoomMessage,
   startGameHttp,
   submitClaimHttp,
   type LifecycleWireResult,
-  type SeatCredential
+  type SeatCredential,
 } from "./api";
 import {
   cardTone,
@@ -35,20 +39,21 @@ import {
   formatCard,
   formatClaim,
   legalClaimsByHandType,
-  playerName
+  playerName,
 } from "./claimUi";
 import type {
   Claim,
   ClaimTemplate,
   PrivateGameView,
   PublicPlayerView,
-  RoomServerMessage
+  RoomServerMessage,
 } from "../shared/index.ts";
 
 const STORAGE_KEY = "bullshit-poker-seat";
 
 type ConnectionStatus = "idle" | "connecting" | "open" | "closed" | "error";
 type EntryMode = "create" | "join";
+type RoomCodeCopyState = "idle" | "copied" | "selected";
 
 function requestId(prefix: string): string {
   return `${prefix}:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`;
@@ -75,6 +80,55 @@ function connectionLabel(status: ConnectionStatus): string {
 
 function canReconnect(status: ConnectionStatus): boolean {
   return status === "closed" || status === "error" || status === "idle";
+}
+
+function formatCountdownLabel(countdown: number): string {
+  return countdown > 0 ? `${countdown} sec` : "-- sec";
+}
+
+async function copyTextToClipboard(text: string): Promise<boolean> {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch {
+    // Fall through to the textarea fallback for browsers that expose
+    // clipboard APIs but block them in the current context.
+  }
+
+  const textArea = document.createElement("textarea");
+  textArea.value = text;
+  textArea.setAttribute("readonly", "true");
+  textArea.style.position = "fixed";
+  textArea.style.left = "-9999px";
+  textArea.style.top = "-9999px";
+  textArea.style.opacity = "0";
+  document.body.appendChild(textArea);
+  textArea.focus();
+  textArea.select();
+  textArea.setSelectionRange(0, text.length);
+
+  try {
+    return document.execCommand("copy");
+  } catch {
+    return false;
+  } finally {
+    document.body.removeChild(textArea);
+  }
+}
+
+function selectVisibleRoomCode(): boolean {
+  const roomCodeElement =
+    document.querySelector<HTMLElement>("[data-room-code]");
+  const selection = window.getSelection();
+  if (!roomCodeElement || !selection) return false;
+
+  const range = document.createRange();
+  range.selectNodeContents(roomCodeElement);
+  selection.removeAllRanges();
+  selection.addRange(range);
+  return true;
 }
 
 function saveCredential(credential: SeatCredential): void {
@@ -114,7 +168,7 @@ function useCountdown(view: PrivateGameView | null): number {
   if (!view?.turnExpiresAt) return 0;
   return Math.min(
     Math.ceil(view.turnDurationMs / 1000),
-    Math.max(0, Math.ceil((view.turnExpiresAt - now) / 1000))
+    Math.max(0, Math.ceil((view.turnExpiresAt - now) / 1000)),
   );
 }
 
@@ -123,13 +177,19 @@ export function App() {
   const [displayName, setDisplayName] = useState("");
   const [pin, setPin] = useState("");
   const [roomCode, setRoomCode] = useState("");
-  const [credential, setCredential] = useState<SeatCredential | null>(() => loadCredential());
+  const [credential, setCredential] = useState<SeatCredential | null>(() =>
+    loadCredential(),
+  );
   const [view, setView] = useState<PrivateGameView | null>(null);
-  const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>("idle");
+  const [connectionStatus, setConnectionStatus] =
+    useState<ConnectionStatus>("idle");
   const [notice, setNotice] = useState<string>("");
+  const [roomCodeCopyState, setRoomCodeCopyState] =
+    useState<RoomCodeCopyState>("idle");
   const [claimPickerOpen, setClaimPickerOpen] = useState(false);
   const [lastRoundOpen, setLastRoundOpen] = useState(false);
   const socketRef = useRef<WebSocket | null>(null);
+  const autoReconnectKeyRef = useRef<string | null>(null);
   const countdown = useCountdown(view);
 
   useEffect(() => {
@@ -150,7 +210,7 @@ export function App() {
     if (message.type === "ROOM_UPDATED") {
       setView(message.view);
       if (message.roundResult) {
-        setLastRoundOpen(true);
+        setLastRoundOpen(message.view.phase !== "GameOver");
       }
       return;
     }
@@ -162,10 +222,23 @@ export function App() {
     }
   }
 
-  function connectLive(nextCredential: SeatCredential): void {
+  const connectLive = useCallback((nextCredential: SeatCredential): void => {
     socketRef.current?.close();
-    socketRef.current = connectRoomSocket(nextCredential, handleServerMessage, setConnectionStatus);
-  }
+    socketRef.current = connectRoomSocket(
+      nextCredential,
+      handleServerMessage,
+      setConnectionStatus,
+    );
+  }, []);
+
+  useEffect(() => {
+    if (!credential || view) return;
+    const reconnectKey = `${credential.code}:${credential.playerId}:${credential.reconnectToken}`;
+    if (autoReconnectKeyRef.current === reconnectKey) return;
+    autoReconnectKeyRef.current = reconnectKey;
+    setNotice("");
+    connectLive(credential);
+  }, [connectLive, credential, view]);
 
   async function handleCreateRoom() {
     setNotice("");
@@ -177,7 +250,7 @@ export function App() {
         code: nextView.code,
         playerId: okResult.playerId!,
         reconnectToken: okResult.reconnectToken!,
-        name: displayName.trim()
+        name: displayName.trim(),
       };
       saveCredential(nextCredential);
       setCredential(nextCredential);
@@ -199,7 +272,7 @@ export function App() {
         code,
         playerId: okResult.playerId!,
         reconnectToken: okResult.reconnectToken!,
-        name: displayName.trim()
+        name: displayName.trim(),
       };
       saveCredential(nextCredential);
       setCredential(nextCredential);
@@ -231,7 +304,7 @@ export function App() {
     if (!credential || !view) return;
     const sent = sendRoomMessage(socketRef.current, {
       type: "ADD_BOT",
-      requestId: requestId("add-bot")
+      requestId: requestId("add-bot"),
     });
     if (!sent) {
       const result = await addBotHttp(credential.code, credential.playerId);
@@ -239,24 +312,40 @@ export function App() {
     }
   }
 
-  async function removeBot(botPlayerId: string) {
+  async function removePlayer(targetPlayerId: string) {
     if (!credential || !view) return;
     const sent = sendRoomMessage(socketRef.current, {
-      type: "REMOVE_BOT",
-      requestId: requestId("remove-bot"),
-      botPlayerId
+      type: "REMOVE_PLAYER",
+      requestId: requestId("remove-player"),
+      targetPlayerId,
     });
     if (!sent) {
-      const result = await removeBotHttp(credential.code, credential.playerId, botPlayerId);
+      const result = await removePlayerHttp(
+        credential.code,
+        credential.playerId,
+        targetPlayerId,
+      );
       setView(assertOk(result).view);
     }
+  }
+
+  async function copyRoomCode() {
+    if (!view) return;
+    const copied = await copyTextToClipboard(view.code);
+    if (copied) {
+      setNotice("");
+      setRoomCodeCopyState("copied");
+    } else {
+      setRoomCodeCopyState(selectVisibleRoomCode() ? "selected" : "idle");
+    }
+    window.setTimeout(() => setRoomCodeCopyState("idle"), 1_500);
   }
 
   async function startGame() {
     if (!credential || !view) return;
     const sent = sendRoomMessage(socketRef.current, {
       type: "START_GAME",
-      requestId: requestId("start-game")
+      requestId: requestId("start-game"),
     });
     if (!sent) {
       const result = await startGameHttp(credential.code, credential.playerId);
@@ -274,14 +363,14 @@ export function App() {
       turnId: view.currentTurnId,
       claimWindowId: view.activeClaimWindow?.id,
       payload: {
-        claim
-      }
+        claim,
+      },
     };
 
     setClaimPickerOpen(false);
     const sent = sendRoomMessage(socketRef.current, {
       type: "SUBMIT_CLAIM",
-      envelope
+      envelope,
     });
     if (!sent) {
       const result = await submitClaimHttp(credential.code, envelope);
@@ -298,12 +387,12 @@ export function App() {
       playerId: credential.playerId,
       stateRevision: view.stateRevision,
       claimWindowId: view.activeClaimWindow.id,
-      payload: {}
+      payload: {},
     };
 
     const sent = sendRoomMessage(socketRef.current, {
       type: "CALL_BULLSHIT",
-      envelope
+      envelope,
     });
     if (!sent) {
       const result = await callBullshitHttp(credential.code, envelope);
@@ -334,11 +423,16 @@ export function App() {
   }
 
   return (
-    <div className="app-shell">
+    <div
+      className={`app-shell ${view.phase === "GameOver" ? "game-over-shell" : ""}`}
+    >
       <TopBar
+        canCopyRoomCode={view.phase === "Lobby"}
         countdown={countdown}
+        roomCodeCopyState={roomCodeCopyState}
         status={connectionStatus}
         view={view}
+        onCopyRoomCode={copyRoomCode}
         onLeave={handleLeaveLocal}
         onReconnect={handleReconnect}
       />
@@ -351,7 +445,18 @@ export function App() {
       )}
 
       {view.phase === "Lobby" ? (
-        <Lobby view={view} onAddBot={addBot} onRemoveBot={removeBot} onStartGame={startGame} />
+        <Lobby
+          view={view}
+          onAddBot={addBot}
+          onRemovePlayer={removePlayer}
+          onStartGame={startGame}
+        />
+      ) : view.phase === "GameOver" ? (
+        <WinnerExitPage
+          view={view}
+          onExit={handleLeaveLocal}
+          onOpenLastRound={() => setLastRoundOpen(true)}
+        />
       ) : (
         <GameTable
           countdown={countdown}
@@ -371,12 +476,84 @@ export function App() {
       )}
 
       {lastRoundOpen && view.lastRoundResult && (
-        <LastRoundSheet
-          view={view}
-          onClose={() => setLastRoundOpen(false)}
-        />
+        <LastRoundSheet view={view} onClose={() => setLastRoundOpen(false)} />
       )}
     </div>
+  );
+}
+
+function WinnerExitPage(props: {
+  view: PrivateGameView;
+  onExit: () => void;
+  onOpenLastRound: () => void;
+}) {
+  const winner = props.view.players.find(
+    (player) => player.id === props.view.winnerPlayerId,
+  );
+  const standings = [...props.view.players].sort((left, right) => {
+    if (left.id === props.view.winnerPlayerId) return -1;
+    if (right.id === props.view.winnerPlayerId) return 1;
+    if (left.eliminated !== right.eliminated) return left.eliminated ? 1 : -1;
+    return right.cardCount - left.cardCount;
+  });
+
+  return (
+    <main className="winner-layout">
+      <section className="winner-hero" aria-label="Game over">
+        <div className="winner-trophy">
+          <Trophy size={48} />
+        </div>
+        <span className="winner-kicker">Table Closed</span>
+        <h2>{winner?.name ?? "Winner"} wins</h2>
+        <p>Last player standing at the BullShit Poker table.</p>
+
+        <div className="winner-actions">
+          {props.view.lastRoundResult && (
+            <button
+              className="secondary-action compact"
+              onClick={props.onOpenLastRound}
+            >
+              <Eye size={18} />
+              Final Reveal
+            </button>
+          )}
+          <button className="primary-action compact" onClick={props.onExit}>
+            <DoorOpen size={18} />
+            Exit Table
+          </button>
+        </div>
+      </section>
+
+      <section className="final-standings" aria-label="Final standings">
+        {standings.map((player) => (
+          <div
+            key={player.id}
+            className={`standing-row ${player.id === props.view.winnerPlayerId ? "winner" : ""}`}
+          >
+            <div className="seat-avatar">
+              {player.id === props.view.winnerPlayerId ? (
+                <Trophy size={18} />
+              ) : player.isBot ? (
+                <Bot size={18} />
+              ) : (
+                <UsersRound size={18} />
+              )}
+            </div>
+            <div className="seat-copy">
+              <strong>{player.name}</strong>
+              <span>{player.cardCount} cards</span>
+            </div>
+            <span className="seat-flag">
+              {player.id === props.view.winnerPlayerId
+                ? "winner"
+                : player.leftAt !== undefined
+                  ? "left"
+                  : "out"}
+            </span>
+          </div>
+        ))}
+      </section>
+    </main>
   );
 }
 
@@ -396,7 +573,8 @@ function EntryScreen(props: {
   onSetPin: (value: string) => void;
   onSetRoomCode: (value: string) => void;
 }) {
-  const canSubmit = props.displayName.trim().length > 0 && /^\d{4}$/.test(props.pin);
+  const canSubmit =
+    props.displayName.trim().length > 0 && /^\d{4}$/.test(props.pin);
   const canJoin = canSubmit && normalizedCode(props.roomCode).length > 0;
 
   return (
@@ -411,10 +589,16 @@ function EntryScreen(props: {
         </div>
 
         <div className="entry-toggle" role="tablist" aria-label="Entry mode">
-          <button className={props.entryMode === "create" ? "active" : ""} onClick={() => props.onSetEntryMode("create")}>
+          <button
+            className={props.entryMode === "create" ? "active" : ""}
+            onClick={() => props.onSetEntryMode("create")}
+          >
             Create
           </button>
-          <button className={props.entryMode === "join" ? "active" : ""} onClick={() => props.onSetEntryMode("join")}>
+          <button
+            className={props.entryMode === "join" ? "active" : ""}
+            onClick={() => props.onSetEntryMode("join")}
+          >
             Join
           </button>
         </div>
@@ -427,8 +611,10 @@ function EntryScreen(props: {
                 inputMode="text"
                 maxLength={6}
                 value={props.roomCode}
-                onChange={(event) => props.onSetRoomCode(normalizedCode(event.target.value))}
-                placeholder="ABC123"
+                onChange={(event) =>
+                  props.onSetRoomCode(normalizedCode(event.target.value))
+                }
+                placeholder="Enter room code"
               />
             </label>
           )}
@@ -437,7 +623,7 @@ function EntryScreen(props: {
             <input
               value={props.displayName}
               onChange={(event) => props.onSetDisplayName(event.target.value)}
-              placeholder="Jaswanth"
+              placeholder="Enter your name"
             />
           </label>
           <label>
@@ -446,8 +632,12 @@ function EntryScreen(props: {
               inputMode="numeric"
               maxLength={4}
               value={props.pin}
-              onChange={(event) => props.onSetPin(event.target.value.replace(/\D/g, "").slice(0, 4))}
-              placeholder="1234"
+              onChange={(event) =>
+                props.onSetPin(
+                  event.target.value.replace(/\D/g, "").slice(0, 4),
+                )
+              }
+              placeholder="Enter the PIN"
               type="password"
             />
           </label>
@@ -481,21 +671,49 @@ function EntryScreen(props: {
 }
 
 function TopBar(props: {
+  canCopyRoomCode: boolean;
   countdown: number;
+  roomCodeCopyState: RoomCodeCopyState;
   status: ConnectionStatus;
   view: PrivateGameView;
+  onCopyRoomCode: () => void;
   onLeave: () => void;
   onReconnect: () => void;
 }) {
   const activeCardTotal = props.view.players
     .filter((player) => !player.eliminated && player.leftAt === undefined)
     .reduce((sum, player) => sum + player.cardCount, 0);
+  const copyFeedbackVisible = props.roomCodeCopyState !== "idle";
+  const copyLabel =
+    props.roomCodeCopyState === "copied"
+      ? "Room code copied"
+      : props.roomCodeCopyState === "selected"
+        ? "Room code selected"
+        : "Copy room code";
+  const copyTitle =
+    props.roomCodeCopyState === "copied"
+      ? "Copied"
+      : props.roomCodeCopyState === "selected"
+        ? "Code selected"
+        : "Copy room code";
 
   return (
     <header className="top-bar">
-      <div>
+      <div className="room-code-block">
         <span className="room-label">Room</span>
-        <strong>{props.view.code}</strong>
+        <div className="room-code-row">
+          <strong data-room-code>{props.view.code}</strong>
+          {props.canCopyRoomCode && (
+            <button
+              className={`room-code-copy ${props.roomCodeCopyState}`}
+              aria-label={copyLabel}
+              title={copyTitle}
+              onClick={props.onCopyRoomCode}
+            >
+              {copyFeedbackVisible ? <Check size={16} /> : <Copy size={16} />}
+            </button>
+          )}
+        </div>
       </div>
       <div className="top-actions">
         <span className={`connection-pill ${props.status}`}>
@@ -504,7 +722,7 @@ function TopBar(props: {
         </span>
         <span className="timer-pill">
           <Clock3 size={15} />
-          {props.countdown || "--"}s
+          {formatCountdownLabel(props.countdown)}
         </span>
         {props.view.phase !== "Lobby" && (
           <span className="card-count-pill">
@@ -513,12 +731,20 @@ function TopBar(props: {
           </span>
         )}
         {canReconnect(props.status) && (
-          <button className="secondary-action compact reconnect-action" onClick={props.onReconnect}>
+          <button
+            className="secondary-action compact reconnect-action"
+            onClick={props.onReconnect}
+          >
             <RefreshCw size={17} />
             Reconnect
           </button>
         )}
-        <button className="icon-button" aria-label="Leave local seat" title="Leave local seat" onClick={props.onLeave}>
+        <button
+          className="icon-button"
+          aria-label="Leave local seat"
+          title="Leave local seat"
+          onClick={props.onLeave}
+        >
           <X size={17} />
         </button>
       </div>
@@ -529,7 +755,7 @@ function TopBar(props: {
 function Lobby(props: {
   view: PrivateGameView;
   onAddBot: () => void;
-  onRemoveBot: (botPlayerId: string) => void;
+  onRemovePlayer: (targetPlayerId: string) => void;
   onStartGame: () => void;
 }) {
   return (
@@ -538,13 +764,19 @@ function Lobby(props: {
         <h2>Lobby</h2>
         <div className="lobby-actions">
           {props.view.isViewerHost && (
-            <button className="secondary-action compact" onClick={props.onAddBot}>
+            <button
+              className="secondary-action compact"
+              onClick={props.onAddBot}
+            >
               <Bot size={18} />
               Add Bot
             </button>
           )}
           {props.view.isViewerHost && (
-            <button className="primary-action compact" onClick={props.onStartGame}>
+            <button
+              className="primary-action compact"
+              onClick={props.onStartGame}
+            >
               <Sparkles size={18} />
               Start
             </button>
@@ -558,8 +790,11 @@ function Lobby(props: {
             key={player.id}
             player={player}
             active={player.id === props.view.viewerPlayerId}
-            canRemove={props.view.isViewerHost && player.isBot}
-            onRemove={() => props.onRemoveBot(player.id)}
+            isViewer={player.id === props.view.viewerPlayerId}
+            canRemove={
+              props.view.isViewerHost && player.id !== props.view.hostPlayerId
+            }
+            onRemove={() => props.onRemovePlayer(player.id)}
           />
         ))}
       </section>
@@ -574,23 +809,44 @@ function GameTable(props: {
   onOpenClaimPicker: () => void;
   onOpenLastRound: () => void;
 }) {
-  const opponents = props.view.players.filter((player) => player.id !== props.view.viewerPlayerId);
-  const currentClaimant = playerName(props.view.players, props.view.currentClaim?.playerId);
-  const currentTurn = playerName(props.view.players, props.view.currentTurnPlayerId);
+  const tablePlayers = [...props.view.players].sort(
+    (left, right) => left.seatIndex - right.seatIndex,
+  );
+  const currentClaimant = playerName(
+    props.view.players,
+    props.view.currentClaim?.playerId,
+  );
+  const currentTurn = playerName(
+    props.view.players,
+    props.view.currentTurnPlayerId,
+  );
+  const isGameOver = props.view.phase === "GameOver";
+  const winnerName = playerName(props.view.players, props.view.winnerPlayerId);
+  const turnHeading = isGameOver
+    ? `${winnerName} wins`
+    : props.view.phase === "RoundActive"
+      ? `Waiting for ${currentTurn}'s move`
+      : "Revealing the round";
+  const previousClaim = props.view.currentClaim
+    ? `Previous claim by ${currentClaimant}: ${formatClaim(props.view.currentClaim)}`
+    : isGameOver
+      ? "Last player standing"
+      : "No previous claim yet";
   const isFinalDecision = Boolean(
     props.view.currentClaim &&
-      props.view.currentTurnPlayerId === props.view.viewerPlayerId &&
-      props.view.startingPlayerId === props.view.viewerPlayerId
+    props.view.currentTurnPlayerId === props.view.viewerPlayerId &&
+    props.view.startingPlayerId === props.view.viewerPlayerId,
   );
 
   return (
     <main className="table-layout">
-      <section className="opponent-rail" aria-label="Opponents">
-        {opponents.map((player) => (
+      <section className="opponent-rail" aria-label="Players">
+        {tablePlayers.map((player) => (
           <PlayerSeat
             key={player.id}
             player={player}
             active={player.id === props.view.currentTurnPlayerId}
+            isViewer={player.id === props.view.viewerPlayerId}
             compact
           />
         ))}
@@ -599,41 +855,58 @@ function GameTable(props: {
       <section className="claim-zone">
         <div className="claim-meta">
           <span>Round {props.view.roundNumber}</span>
-          <span>{currentTurn}</span>
-          <span>{props.countdown || "--"}s</span>
+          <span>
+            {isGameOver ? "Game over" : formatCountdownLabel(props.countdown)}
+          </span>
         </div>
-        <h2>{props.view.currentClaim ? formatClaim(props.view.currentClaim) : "Opening Claim"}</h2>
-        <div className="claim-byline">
-          {props.view.currentClaim ? `by ${currentClaimant}` : `starts with ${currentTurn}`}
-        </div>
+        {isGameOver && (
+          <div className="winner-mark" aria-label="Game winner">
+            <Trophy size={30} />
+          </div>
+        )}
+        <h2>{turnHeading}</h2>
+        <div className="claim-byline">{previousClaim}</div>
 
         <ClaimTimeline view={props.view} />
 
-        <div className="table-actions">
-          <button
-            className="primary-action compact"
-            disabled={!props.view.canViewerAct || props.view.phase !== "RoundActive"}
-            onClick={props.onOpenClaimPicker}
-          >
-            <Plus size={18} />
-            {isFinalDecision ? "Final Claim" : "Make Claim"}
-          </button>
-          <button
-            className="danger-action"
-            disabled={!props.view.canViewerCallBullShit}
-            onClick={props.onCallBullshit}
-          >
-            <ShieldAlert size={18} />
-            BullShit
-          </button>
+        <div
+          className={`table-actions ${isGameOver ? "game-over-actions" : ""}`}
+        >
+          {!isGameOver && (
+            <>
+              <button
+                className="primary-action compact"
+                disabled={
+                  !props.view.canViewerAct || props.view.phase !== "RoundActive"
+                }
+                onClick={props.onOpenClaimPicker}
+              >
+                <Plus size={18} />
+                {isFinalDecision ? "Final Claim" : "Make Claim"}
+              </button>
+              <button
+                className="danger-action"
+                disabled={!props.view.canViewerCallBullShit}
+                onClick={props.onCallBullshit}
+              >
+                <ShieldAlert size={18} />
+                BullShit
+              </button>
+            </>
+          )}
           {props.view.lastRoundResult && (
-            <button className="secondary-action compact" onClick={props.onOpenLastRound}>
+            <button
+              className="secondary-action compact"
+              onClick={props.onOpenLastRound}
+            >
               <Eye size={18} />
               Last Round
             </button>
           )}
           {props.view.phase === "ResolvingRound" && (
-            <div className="auto-next-notice">Next round starts automatically</div>
+            <div className="auto-next-notice">
+              Next round starts automatically
+            </div>
           )}
         </div>
       </section>
@@ -660,11 +933,14 @@ function PlayerSeat(props: {
   player: PublicPlayerView;
   active?: boolean;
   compact?: boolean;
+  isViewer?: boolean;
   canRemove?: boolean;
   onRemove?: () => void;
 }) {
   return (
-    <div className={`player-seat ${props.active ? "active" : ""} ${props.compact ? "compact" : ""}`}>
+    <div
+      className={`player-seat ${props.active ? "active" : ""} ${props.compact ? "compact" : ""}`}
+    >
       <div className="seat-avatar">
         {props.player.isBot ? <Bot size={18} /> : <UsersRound size={18} />}
       </div>
@@ -672,10 +948,17 @@ function PlayerSeat(props: {
         <strong>{props.player.name}</strong>
         <span>{props.player.cardCount} cards</span>
       </div>
-      {!props.player.connected && <span className="seat-flag">offline</span>}
-      {props.player.eliminated && <span className="seat-flag">out</span>}
+      <div className="seat-badges">
+        {props.isViewer && <span className="seat-flag you">you</span>}
+        {!props.player.connected && <span className="seat-flag">offline</span>}
+        {props.player.eliminated && <span className="seat-flag">out</span>}
+      </div>
       {props.canRemove && (
-        <button className="seat-remove" aria-label={`Remove ${props.player.name}`} onClick={props.onRemove}>
+        <button
+          className="seat-remove"
+          aria-label={`Remove ${props.player.name}`}
+          onClick={props.onRemove}
+        >
           <Trash2 size={16} />
         </button>
       )}
@@ -706,13 +989,17 @@ function ClaimPicker(props: {
   onClose: () => void;
   onSubmit: (claim: ClaimTemplate) => void;
 }) {
-  const groups = useMemo(() => legalClaimsByHandType(props.view.currentClaim), [props.view.currentClaim]);
+  const groups = useMemo(
+    () => legalClaimsByHandType(props.view.currentClaim),
+    [props.view.currentClaim],
+  );
   const [activeType, setActiveType] = useState(groups[0]?.handType);
-  const activeGroup = groups.find((group) => group.handType === activeType) ?? groups[0] ?? null;
+  const activeGroup =
+    groups.find((group) => group.handType === activeType) ?? groups[0] ?? null;
   const isFinalDecision = Boolean(
     props.view.currentClaim &&
-      props.view.currentTurnPlayerId === props.view.viewerPlayerId &&
-      props.view.startingPlayerId === props.view.viewerPlayerId
+    props.view.currentTurnPlayerId === props.view.viewerPlayerId &&
+    props.view.startingPlayerId === props.view.viewerPlayerId,
   );
 
   return (
@@ -739,7 +1026,9 @@ function ClaimPicker(props: {
               {groups.map((group) => (
                 <button
                   key={group.handType}
-                  className={group.handType === activeGroup.handType ? "active" : ""}
+                  className={
+                    group.handType === activeGroup.handType ? "active" : ""
+                  }
                   onClick={() => setActiveType(group.handType)}
                 >
                   {group.label}
@@ -749,7 +1038,10 @@ function ClaimPicker(props: {
 
             <div className="claim-options">
               {activeGroup.claims.map((claim) => (
-                <button key={claimKey(claim)} onClick={() => props.onSubmit(claim)}>
+                <button
+                  key={claimKey(claim)}
+                  onClick={() => props.onSubmit(claim)}
+                >
                   <span>{compactClaim(claim)}</span>
                   <strong>{formatClaim(claim)}</strong>
                 </button>
@@ -762,10 +1054,7 @@ function ClaimPicker(props: {
   );
 }
 
-function LastRoundSheet(props: {
-  view: PrivateGameView;
-  onClose: () => void;
-}) {
+function LastRoundSheet(props: { view: PrivateGameView; onClose: () => void }) {
   const result = props.view.lastRoundResult!;
   const proofIds = new Set(result.proofCardIds ?? []);
 
@@ -783,11 +1072,41 @@ function LastRoundSheet(props: {
         </header>
 
         <div className="result-summary">
-          <ResultLine label="Caller" value={result.callerPlayerId ? playerName(props.view.players, result.callerPlayerId) : "No BullShit caller"} />
-          <ResultLine label="Claimant" value={playerName(props.view.players, result.claimantPlayerId)} />
-          <ResultLine label="Truth" value={result.claimWasTrue === undefined ? result.reason : result.claimWasTrue ? "True" : "False"} />
-          <ResultLine label="Penalty" value={playerName(props.view.players, result.penaltyPlayerId)} />
-          <ResultLine label="Next" value={playerName(props.view.players, result.nextStartingPlayerId)} />
+          <ResultLine
+            label="Caller"
+            value={
+              result.callerPlayerId
+                ? playerName(props.view.players, result.callerPlayerId)
+                : "No BullShit caller"
+            }
+          />
+          <ResultLine
+            label="Claimant"
+            value={playerName(props.view.players, result.claimantPlayerId)}
+          />
+          <ResultLine
+            label="Truth"
+            value={
+              result.claimWasTrue === undefined
+                ? result.reason
+                : result.claimWasTrue
+                  ? "True"
+                  : "False"
+            }
+          />
+          <ResultLine
+            label="Penalty"
+            value={playerName(props.view.players, result.penaltyPlayerId)}
+          />
+          <ResultLine
+            label={props.view.phase === "GameOver" ? "Winner" : "Next"}
+            value={playerName(
+              props.view.players,
+              props.view.phase === "GameOver"
+                ? props.view.winnerPlayerId
+                : result.nextStartingPlayerId,
+            )}
+          />
         </div>
 
         <div className="revealed-groups">
@@ -796,7 +1115,10 @@ function LastRoundSheet(props: {
               <strong>{playerName(props.view.players, hand.playerId)}</strong>
               <div className="mini-card-row">
                 {hand.cards.map((card) => (
-                  <span key={card.id} className={`mini-card ${cardTone(card)} ${proofIds.has(card.id) ? "proof" : ""}`}>
+                  <span
+                    key={card.id}
+                    className={`mini-card ${cardTone(card)} ${proofIds.has(card.id) ? "proof" : ""}`}
+                  >
                     {formatCard(card)}
                   </span>
                 ))}
@@ -806,7 +1128,9 @@ function LastRoundSheet(props: {
         </div>
 
         {props.view.phase === "ResolvingRound" && (
-          <div className="auto-next-sheet">Next round starts automatically after this reveal.</div>
+          <div className="auto-next-sheet">
+            Next round starts automatically after this reveal.
+          </div>
         )}
       </section>
     </div>
