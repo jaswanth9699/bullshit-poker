@@ -1,0 +1,17 @@
+name = "bullshit-poker"
+main = "src/worker/worker.ts"
+compatibility_date = "2026-04-25"
+workers_dev = true
+preview_urls = false
+
+[assets]
+directory = "./dist"
+binding = "ASSETS"
+
+[[durable_objects.bindings]]
+name = "ROOM_DURABLE_OBJECT"
+class_name = "RoomDurableObject"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["RoomDurableObject"]
