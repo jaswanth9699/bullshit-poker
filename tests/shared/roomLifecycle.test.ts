@@ -215,6 +215,112 @@ test("joinRoom reclaims existing seat with same normalized name and correct PIN"
   assert.equal(result.state.stateRevision, host.state.stateRevision + 1);
 });
 
+test("joinRoom reclaims an original started-game seat with same name and PIN", () => {
+  const identity = identityProvider();
+  const host = createHostRoom(identity);
+  if (!host.ok) return;
+
+  const joined = joinRoom(host.state, {
+    name: "Friend",
+    pin: "5678",
+    now: 200,
+    identity,
+  });
+  assert.equal(joined.ok, true);
+  if (!joined.ok) return;
+
+  const started = startGame(joined.state, {
+    hostPlayerId: "player-1",
+    now: 300,
+    rng: () => 0,
+  });
+  assert.equal(started.ok, true);
+  if (!started.ok) return;
+
+  const disconnected = disconnectPlayer(started.state, {
+    playerId: "player-2",
+    now: 400,
+  });
+  assert.equal(disconnected.ok, true);
+  if (!disconnected.ok) return;
+
+  const reclaimed = joinRoom(disconnected.state, {
+    name: " friend ",
+    pin: "5678",
+    now: 500,
+    identity,
+  });
+
+  assert.equal(reclaimed.ok, true);
+  if (!reclaimed.ok) return;
+  assert.equal(reclaimed.playerId, "player-2");
+  assert.equal(reclaimed.reclaimed, true);
+  assert.equal(reclaimed.reconnectToken, "token-3");
+  assert.equal(
+    reclaimed.state.players.find((player) => player.id === "player-2")
+      ?.connected,
+    true,
+  );
+  assert.equal(reclaimed.state.players.length, 2);
+  assert.deepEqual(
+    reclaimed.state.players.find((player) => player.id === "player-2")
+      ?.roundCards,
+    started.state.players.find((player) => player.id === "player-2")
+      ?.roundCards,
+  );
+});
+
+test("joinRoom blocks new started-game names and wrong PIN seat claims", () => {
+  const identity = identityProvider();
+  const host = createHostRoom(identity);
+  if (!host.ok) return;
+
+  const joined = joinRoom(host.state, {
+    name: "Friend",
+    pin: "5678",
+    now: 200,
+    identity,
+  });
+  assert.equal(joined.ok, true);
+  if (!joined.ok) return;
+
+  const started = startGame(joined.state, {
+    hostPlayerId: "player-1",
+    now: 300,
+    rng: () => 0,
+  });
+  assert.equal(started.ok, true);
+  if (!started.ok) return;
+
+  assert.deepEqual(
+    joinRoom(started.state, {
+      name: "Friend",
+      pin: "9999",
+      now: 400,
+      identity,
+    }),
+    {
+      ok: false,
+      code: "PIN_MISMATCH",
+      latestStateRevision: started.state.stateRevision,
+    },
+  );
+
+  assert.deepEqual(
+    joinRoom(started.state, {
+      name: "Late Player",
+      pin: "0000",
+      now: 400,
+      identity,
+    }),
+    {
+      ok: false,
+      code: "GAME_ALREADY_STARTED",
+      latestStateRevision: started.state.stateRevision,
+    },
+  );
+});
+
 test("addBotToRoom adds a host-controlled bot seat without player credentials", () => {
   const identity = identityProvider();
   const host = createHostRoom(identity);
@@ -489,7 +595,7 @@ test("startGame deals one card to each player and starts with host seat 0", () =
   assert.equal(started.state.currentClaim, undefined);
   assert.equal(started.state.activeClaimWindow, undefined);
   assert.equal(started.state.turnStartedAt, 300);
-  assert.equal(started.state.turnExpiresAt, 120300);
+  assert.equal(started.state.turnExpiresAt, undefined);
   assert.equal(
     started.state.players.every((player) => player.roundCards.length === 1),
     true,
@@ -561,7 +667,7 @@ test("advanceToNextRound deals new cards and rotates clockwise from previous sta
     2,
   );
   assert.equal(result.state.turnStartedAt, 1_000);
-  assert.equal(result.state.turnExpiresAt, 121_000);
+  assert.equal(result.state.turnExpiresAt, undefined);
 });
 
 test("advanceToNextRound skips eliminated and voluntary-leaver seats", () => {

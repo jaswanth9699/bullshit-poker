@@ -4,7 +4,6 @@ import test from "node:test";
 import {
   applyCallBullshit,
   applySubmitClaim,
-  applyTimeout,
   createCard,
   type ClientActionEnvelope,
   type GameState,
@@ -107,7 +106,7 @@ function callEnvelope(
   };
 }
 
-test("submit claim advances turn, opens new claim window, and resets 120s timer", () => {
+test("submit claim advances turn, opens a new claim window, and does not set a timeout", () => {
   const state = stateWithClaim();
   const result = applySubmitClaim(
     state,
@@ -121,7 +120,7 @@ test("submit claim advances turn, opens new claim window, and resets 120s timer"
   assert.equal(result.ok && result.state.currentClaim?.playerId, "B");
   assert.equal(result.ok && result.state.currentTurnPlayerId, "C");
   assert.equal(result.ok && result.state.activeClaimWindow?.status, "OPEN");
-  assert.equal(result.ok && result.state.turnExpiresAt, 121_000);
+  assert.equal(result.ok && result.state.turnExpiresAt, undefined);
   assert.equal(
     result.ok && result.state.stateRevision,
     state.stateRevision + 1,
@@ -247,47 +246,17 @@ test("final claim accepted first resolves round and rejects old BullShit call", 
   assert.equal(!callResult.ok && callResult.code, "ROUND_ALREADY_RESOLVED");
 });
 
-test("timeout accepted first resolves round and later action is stale", () => {
-  const state = stateWithClaim({ turnExpiresAt: 1_000 });
-  const timeoutResult = applyTimeout(state, state.currentTurnId!, 1_000);
-
-  assert.equal(timeoutResult.ok, true);
-  assert.equal(
-    timeoutResult.ok && timeoutResult.roundResult?.reason,
-    "TIMEOUT",
-  );
-
-  const resolvedState = timeoutResult.ok ? timeoutResult.state : state;
-  const claimResult = applySubmitClaim(
-    resolvedState,
-    submitEnvelope(state, "B", {
-      claim: { handType: "PAIR", primaryRank: "A" },
-    }),
-    1_001,
-  );
-
-  assert.equal(claimResult.ok, false);
-  assert.equal(!claimResult.ok && claimResult.code, "ROUND_ALREADY_RESOLVED");
-});
-
-test("claim submitted at or after expiry is rejected as expired", () => {
+test("legacy turn expiry timestamps do not block claims", () => {
   const state = stateWithClaim({ turnExpiresAt: 1_000 });
   const result = applySubmitClaim(
     state,
     submitEnvelope(state, "B", {
       claim: { handType: "PAIR", primaryRank: "A" },
     }),
-    1_000,
+    5_000,
   );
 
-  assert.equal(result.ok, false);
-  assert.equal(!result.ok && result.code, "TURN_EXPIRED");
-});
-
-test("bullshit call at or after expiry is rejected so timeout can resolve first", () => {
-  const state = stateWithClaim({ turnExpiresAt: 1_000 });
-  const result = applyCallBullshit(state, callEnvelope(state, "C"), 1_000);
-
-  assert.equal(result.ok, false);
-  assert.equal(!result.ok && result.code, "TURN_EXPIRED");
+  assert.equal(result.ok, true);
+  assert.equal(result.ok && result.state.currentClaim?.playerId, "B");
+  assert.equal(result.ok && result.state.turnExpiresAt, undefined);
 });

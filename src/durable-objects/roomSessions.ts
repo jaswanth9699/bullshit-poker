@@ -66,7 +66,6 @@ export type RoomSessionAuthority = {
     envelope: ClientActionEnvelope<CallBullshitPayload>,
     now: number,
   ): Promise<ServerActionResult>;
-  timeout(turnId: string, now: number): Promise<ServerActionResult>;
 };
 
 export type SessionConnectResult =
@@ -155,8 +154,6 @@ export class RoomSessionManager {
   private autoNextRoundRevision?: number;
   private botActionTimer?: ReturnType<typeof setTimeout>;
   private botActionKey?: string;
-  private turnTimeoutTimer?: ReturnType<typeof setTimeout>;
-  private turnTimeoutKey?: string;
 
   constructor(
     authority: RoomSessionAuthority,
@@ -214,6 +211,8 @@ export class RoomSessionManager {
       return connected;
     }
 
+    this.replaceOpenSessionsForPlayer(params.playerId);
+
     this.sessionCounter += 1;
     const session: SessionRecord = {
       id: `session-${this.sessionCounter}`,
@@ -236,7 +235,6 @@ export class RoomSessionManager {
       excludeSessionId: session.id,
     });
     this.scheduleAutoNextRound(connected.state);
-    this.scheduleTurnTimeout(connected.state);
     await this.processBots();
 
     return {
@@ -341,15 +339,6 @@ export class RoomSessionManager {
         await this.handleCallBullshit(session, message.envelope, now);
         return;
 
-      case "EXPIRE_TURN":
-        await this.handleTimeout(
-          session,
-          message.requestId,
-          message.turnId,
-          now,
-        );
-        return;
-
       default:
         await this.reject(session, {
           requestId: messageRequestId(message),
@@ -375,7 +364,6 @@ export class RoomSessionManager {
     if (result.ok) {
       await this.broadcastState("DISCONNECTED", result.state);
       this.scheduleAutoNextRound(result.state);
-      this.scheduleTurnTimeout(result.state);
       await this.processBots();
     }
   }
@@ -424,16 +412,6 @@ export class RoomSessionManager {
     );
   }
 
-  private async handleTimeout(
-    session: SessionRecord,
-    requestId: string,
-    turnId: string,
-    now: number,
-  ): Promise<void> {
-    const result = await this.authority.timeout(turnId, now);
-    await this.handleActionResult(session, requestId, result);
-  }
-
   private async handleActionResult(
     session: SessionRecord,
     requestId: string | undefined,
@@ -455,7 +433,6 @@ export class RoomSessionManager {
       roundResult: result.roundResult,
     });
     this.scheduleAutoNextRound(result.state);
-    this.scheduleTurnTimeout(result.state);
     await this.processBots();
   }
 
@@ -479,7 +456,6 @@ export class RoomSessionManager {
       acceptedByPlayerId: session.playerId,
     });
     this.scheduleAutoNextRound(result.state);
-    this.scheduleTurnTimeout(result.state);
     await this.processBots();
   }
 
@@ -507,6 +483,14 @@ export class RoomSessionManager {
       if (session.playerId === playerId) return true;
     }
     return false;
+  }
+
+  private replaceOpenSessionsForPlayer(playerId: string): void {
+    for (const session of [...this.sessions.values()]) {
+      if (session.playerId !== playerId) continue;
+      this.sessions.delete(session.id);
+      session.socket.close?.(4000, "SESSION_REPLACED");
+    }
   }
 
   private async latestRevision(): Promise<number> {
@@ -736,7 +720,6 @@ export class RoomSessionManager {
         roundResult: result.roundResult,
       });
       this.scheduleAutoNextRound(result.state);
-      this.scheduleTurnTimeout(result.state);
       shouldContinue = result.state.phase === "RoundActive";
     } finally {
       this.processingBots = false;
@@ -852,110 +835,6 @@ export class RoomSessionManager {
       requestId: `auto-next-round:${expectedRevision}`,
     });
     this.scheduleAutoNextRound(result.state);
-    this.scheduleTurnTimeout(result.state);
-    await this.processBots();
-  }
-
-  private turnTimeoutScheduleKey(state: GameState): string | undefined {
-    if (
-      state.phase !== "RoundActive" ||
-      !state.currentTurnId ||
-      state.turnExpiresAt === undefined
-    ) {
-      return undefined;
-    }
-    return `${state.stateRevision}:${state.currentTurnId}:${state.turnExpiresAt}`;
-  }
-
-  private clearTurnTimeout(): void {
-    if (this.turnTimeoutTimer !== undefined) {
-      clearTimeout(this.turnTimeoutTimer);
-    }
-    this.turnTimeoutTimer = undefined;
-    this.turnTimeoutKey = undefined;
-  }
-
-  private scheduleTurnTimeout(state: GameState): void {
-    const timeoutKey = this.turnTimeoutScheduleKey(state);
-    if (!timeoutKey) {
-      this.clearTurnTimeout();
-      return;
-    }
-
-    if (
-      this.turnTimeoutKey === timeoutKey &&
-      this.turnTimeoutTimer !== undefined
-    ) {
-      return;
-    }
-
-    this.clearTurnTimeout();
-    this.turnTimeoutKey = timeoutKey;
-    const delayMs = Math.max(0, state.turnExpiresAt! - this.now());
-
-    this.turnTimeoutTimer = setTimeout(() => {
-      void this.runScheduledTurnTimeout(
-        timeoutKey,
-        state.stateRevision,
-        state.currentTurnId!,
-      );
-    }, delayMs);
-
-    const timer = this.turnTimeoutTimer as ReturnType<typeof setTimeout> & {
-      unref?: () => void;
-    };
-    timer.unref?.();
-  }
-
-  private async runScheduledTurnTimeout(
-    expectedTimeoutKey: string,
-    expectedRevision: number,
-    expectedTurnId: string,
-  ): Promise<void> {
-    if (this.turnTimeoutKey !== expectedTimeoutKey) {
-      return;
-    }
-
-    this.turnTimeoutTimer = undefined;
-    this.turnTimeoutKey = undefined;
-
-    const state = await this.authority.getState();
-    if (
-      !state ||
-      state.phase !== "RoundActive" ||
-      state.stateRevision !== expectedRevision
-    ) {
-      if (state) this.scheduleTurnTimeout(state);
-      return;
-    }
-    if (
-      state.currentTurnId !== expectedTurnId ||
-      state.turnExpiresAt === undefined
-    ) {
-      this.scheduleTurnTimeout(state);
-      return;
-    }
-
-    const now = this.now();
-    if (now < state.turnExpiresAt) {
-      this.scheduleTurnTimeout(state);
-      return;
-    }
-
-    const result = await this.authority.timeout(expectedTurnId, now);
-    if (!result.ok) {
-      const latestState = await this.authority.getState();
-      if (latestState) this.scheduleTurnTimeout(latestState);
-      return;
-    }
-
-    await this.broadcastState("TURN_TIMEOUT", result.state, {
-      requestId: `turn-timeout:${expectedTurnId}`,
-      acceptedByPlayerId: state.currentTurnPlayerId,
-      roundResult: result.roundResult,
-    });
-    this.scheduleAutoNextRound(result.state);
-    this.scheduleTurnTimeout(result.state);
     await this.processBots();
   }
 

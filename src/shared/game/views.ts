@@ -55,24 +55,25 @@ export function createPublicGameView(state: GameState): PublicGameView {
 export function createPrivateGameView(state: GameState, viewerPlayerId: string): PrivateGameView {
   const viewer = state.players.find((player) => player.id === viewerPlayerId);
   const currentClaim = state.currentClaim;
+  const viewerIsActive = Boolean(
+    viewer && !viewer.eliminated && viewer.leftAt === undefined
+  );
 
   return {
     ...createPublicGameView(state),
     viewerPlayerId,
     viewerCards: viewer ? [...viewer.roundCards] : [],
     isViewerHost: state.hostPlayerId === viewerPlayerId,
-    canViewerAct: state.phase === "RoundActive" && state.currentTurnPlayerId === viewerPlayerId,
+    canViewerAct:
+      viewerIsActive &&
+      state.phase === "RoundActive" &&
+      state.currentTurnPlayerId === viewerPlayerId,
     canViewerCallBullShit: Boolean(
       state.phase === "RoundActive" &&
         currentClaim &&
         currentClaim.playerId !== viewerPlayerId &&
         state.activeClaimWindow?.status === "OPEN" &&
-        state.players.some(
-          (player) =>
-            player.id === viewerPlayerId &&
-            !player.eliminated &&
-            player.leftAt === undefined
-        )
+        viewerIsActive
     )
   };
 }

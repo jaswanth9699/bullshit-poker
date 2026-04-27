@@ -287,6 +287,43 @@ test("RoomSessionManager rejects invalid reconnect token before adding a session
   assert.equal(manager.activeSessionCount, 0);
 });
 
+test("RoomSessionManager replaces an older live session for the same player", async () => {
+  const room = await startedRoom();
+  const manager = new RoomSessionManager(room.authority, () => 500);
+  const firstSocket = new FakeSocket();
+  const secondSocket = new FakeSocket();
+
+  await connectPlayer({
+    manager,
+    socket: firstSocket,
+    playerId: room.hostPlayerId,
+    reconnectToken: room.hostToken,
+    identity: room.identity,
+  });
+  await connectPlayer({
+    manager,
+    socket: secondSocket,
+    playerId: room.hostPlayerId,
+    reconnectToken: room.hostToken,
+    identity: room.identity,
+  });
+
+  const accepted = secondSocket.lastMessageOfType("SESSION_ACCEPTED");
+  const state = await room.authority.getState();
+
+  assert.equal(manager.activeSessionCount, 1);
+  assert.deepEqual(firstSocket.closed, {
+    code: 4000,
+    reason: "SESSION_REPLACED",
+  });
+  assert.equal(accepted?.view.viewerPlayerId, room.hostPlayerId);
+  assert.equal(
+    state?.players.find((player) => player.id === room.hostPlayerId)
+      ?.connected,
+    true,
+  );
+});
+
 test("RoomSessionManager broadcasts accepted actions as sanitized per-player views", async () => {
   const room = await startedRoom();
   const manager = new RoomSessionManager(room.authority, () => 500);
@@ -598,43 +635,6 @@ test("RoomSessionManager automatically advances after the round reveal beat", as
   assert.equal(update?.reason, "AUTO_NEXT_ROUND");
   assert.equal(update?.view.phase, "RoundActive");
   assert.equal(update?.view.roundNumber, 2);
-});
-
-test("RoomSessionManager automatically applies a turn timeout when the active player waits too long", async () => {
-  const identity = identityProvider();
-  const state = roomStateWithBot({
-    currentTurnPlayerId: "human",
-    botCards: [createCard("A", "S")],
-  });
-  state.turnStartedAt = 100;
-  state.turnExpiresAt = 500;
-
-  const authority = new RoomAuthority(new MemoryRoomStateStore(state));
-  const manager = new RoomSessionManager(authority, {
-    now: () => 1_000,
-    botActionMinDelayMs: 0,
-    botActionMaxDelayMs: 0,
-  });
-  const socket = new FakeSocket();
-
-  await connectPlayer({
-    manager,
-    socket,
-    playerId: "human",
-    reconnectToken: "token-human",
-    identity,
-  });
-  await new Promise((resolve) => setTimeout(resolve, 0));
-
-  const timedOutState = await authority.getState();
-  const update = socket.lastMessageOfType("ROOM_UPDATED");
-
-  assert.equal(timedOutState?.phase, "ResolvingRound");
-  assert.equal(timedOutState?.lastRoundResult?.reason, "TIMEOUT");
-  assert.equal(timedOutState?.lastRoundResult?.penaltyPlayerId, "human");
-  assert.equal(update?.reason, "TURN_TIMEOUT");
-  assert.equal(update?.roundResult?.reason, "TIMEOUT");
-  assert.equal(update?.view.phase, "ResolvingRound");
 });
 
 test("RoomSessionManager adds bot seats from a host live session", async () => {

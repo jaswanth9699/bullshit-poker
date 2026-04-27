@@ -21,7 +21,7 @@ export const HAND_TYPE_LABELS: Record<HandType, string> = {
   ROYAL_FLUSH: "Royal Flush"
 };
 
-const RANK_WORDS: Record<Rank, string> = {
+export const RANK_WORDS: Record<Rank, string> = {
   "2": "Twos",
   "3": "Threes",
   "4": "Fours",
@@ -37,7 +37,7 @@ const RANK_WORDS: Record<Rank, string> = {
   A: "Aces"
 };
 
-const RANK_SHORT: Record<Rank, string> = {
+export const RANK_SHORT: Record<Rank, string> = {
   "2": "2",
   "3": "3",
   "4": "4",

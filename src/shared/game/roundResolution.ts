@@ -206,23 +206,3 @@ export function resolveFinalClaim(state: GameState, finalClaim: Claim, now: numb
     roundResult
   };
 }
-
-export function resolveTimeout(state: GameState, now: number): ResolutionResult {
-  if (!state.currentTurnPlayerId) {
-    throw new Error("Cannot resolve timeout without currentTurnPlayerId");
-  }
-
-  const updatedPlayers = applyPenalty(state.players, state.currentTurnPlayerId);
-  const roundResult = buildRoundResult({
-    state,
-    reason: "TIMEOUT",
-    penaltyPlayerId: state.currentTurnPlayerId,
-    updatedPlayers,
-    now
-  });
-
-  return {
-    state: baseResolvedState(state, updatedPlayers, roundResult),
-    roundResult
-  };
-}

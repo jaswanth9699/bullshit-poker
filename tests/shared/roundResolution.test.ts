@@ -5,7 +5,6 @@ import {
   createCard,
   resolveBullshitCall,
   resolveFinalClaim,
-  resolveTimeout,
   type GameState,
   type PlayerState,
 } from "../../src/shared/index.ts";
@@ -189,42 +188,22 @@ test("correct BullShit call penalizes claimant when claim is false", () => {
   );
 });
 
-test("timeout penalizes current player and can eliminate them", () => {
-  const state = baseState({
-    currentTurnPlayerId: "B",
-    players: [
-      player("A", 0, [createCard("A", "S")]),
-      player("B", 1, [createCard("K", "H")], 5),
-      player("C", 2, [createCard("2", "D")]),
-    ],
-  });
-
-  const result = resolveTimeout(state, 500);
-
-  assert.equal(result.roundResult.reason, "TIMEOUT");
-  assert.equal(result.roundResult.penaltyPlayerId, "B");
-  assert.equal(
-    result.state.players.find((candidate) => candidate.id === "B")?.cardCount,
-    6,
-  );
-  assert.equal(
-    result.state.players.find((candidate) => candidate.id === "B")?.eliminated,
-    true,
-  );
-  assert.deepEqual(result.roundResult.eliminatedPlayerIds, ["B"]);
-  assert.equal(result.roundResult.nextStartingPlayerId, "C");
-});
-
 test("last active player wins immediately when a penalty eliminates everyone else", () => {
   const state = baseState({
-    currentTurnPlayerId: "B",
     players: [
       player("A", 0, [createCard("A", "S")]),
       player("B", 1, [createCard("K", "H")], 5),
     ],
+    currentClaim: {
+      id: "claim-1",
+      handType: "PAIR",
+      primaryRank: "K",
+      playerId: "B",
+      sequence: 1,
+    },
   });
 
-  const result = resolveTimeout(state, 500);
+  const result = resolveBullshitCall(state, "A", 500);
 
   assert.equal(result.state.phase, "GameOver");
   assert.equal(result.state.winnerPlayerId, "A");

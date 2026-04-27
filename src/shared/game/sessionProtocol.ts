@@ -17,12 +17,6 @@ export type CallBullShitClientMessage = {
   envelope: ClientActionEnvelope<CallBullshitPayload>;
 };
 
-export type ExpireTurnClientMessage = {
-  type: "EXPIRE_TURN";
-  requestId: string;
-  turnId: string;
-};
-
 export type RequestSyncClientMessage = {
   type: "REQUEST_SYNC";
   requestId: string;
@@ -64,7 +58,6 @@ export type ClientPingMessage = {
 export type RoomClientMessage =
   | SubmitClaimClientMessage
   | CallBullShitClientMessage
-  | ExpireTurnClientMessage
   | RequestSyncClientMessage
   | AddBotClientMessage
   | RemoveBotClientMessage
@@ -90,7 +83,6 @@ export type RoomUpdatedReason =
   | "CONNECTED"
   | "DISCONNECTED"
   | "ACTION_ACCEPTED"
-  | "TURN_TIMEOUT"
   | "AUTO_NEXT_ROUND"
   | "SYNC_REQUESTED";
 

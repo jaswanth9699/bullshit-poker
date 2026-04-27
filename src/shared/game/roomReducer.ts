@@ -4,11 +4,7 @@ import {
   validateClaimShape,
 } from "../claims/compareClaims.ts";
 import type { Claim } from "../claims/claimTypes.ts";
-import {
-  resolveBullshitCall,
-  resolveFinalClaim,
-  resolveTimeout,
-} from "./roundResolution.ts";
+import { resolveBullshitCall, resolveFinalClaim } from "./roundResolution.ts";
 import { advanceToNextActivePlayer } from "./seatOrder.ts";
 import type {
   ClientActionEnvelope,
@@ -89,7 +85,6 @@ function ensureBaseActionIsValid<TPayload>(
 function ensureTurnActionIsValid<TPayload>(
   state: GameState,
   envelope: ClientActionEnvelope<TPayload>,
-  now: number,
 ): ServerErrorCode | null {
   const baseError = ensureBaseActionIsValid(state, envelope);
   if (baseError) return baseError;
@@ -99,9 +94,6 @@ function ensureTurnActionIsValid<TPayload>(
   }
   if (!state.currentTurnId || envelope.turnId !== state.currentTurnId) {
     return "STALE_TURN";
-  }
-  if (state.turnExpiresAt !== undefined && now >= state.turnExpiresAt) {
-    return "TURN_EXPIRED";
   }
   return null;
 }
@@ -152,7 +144,7 @@ export function applySubmitClaim(
   envelope: ClientActionEnvelope<SubmitClaimPayload>,
   now: number,
 ): ServerActionResult {
-  const validationError = ensureTurnActionIsValid(state, envelope, now);
+  const validationError = ensureTurnActionIsValid(state, envelope);
   if (validationError) return error(state, validationError);
 
   if (
@@ -227,7 +219,7 @@ export function applySubmitClaim(
     currentTurnPlayerId: nextTurnPlayerId,
     currentTurnId: nextTurnId,
     turnStartedAt: now,
-    turnExpiresAt: now + state.turnDurationMs,
+    turnExpiresAt: undefined,
   };
 
   return success(nextState);
@@ -243,8 +235,6 @@ export function applyCallBullshit(
   if (!state.currentClaim) return error(state, "NO_CURRENT_CLAIM");
   if (state.currentClaim.playerId === envelope.playerId)
     return error(state, "CLAIMANT_CANNOT_CALL");
-  if (state.turnExpiresAt !== undefined && now >= state.turnExpiresAt)
-    return error(state, "TURN_EXPIRED");
   if (!activeClaimWindowMatches(state, envelope.claimWindowId)) {
     return error(
       state,
@@ -260,23 +250,4 @@ export function applyCallBullshit(
   } catch {
     return error(state, "INTERNAL_ERROR");
   }
-}
-
-export function applyTimeout(
-  state: GameState,
-  turnIdToExpire: string,
-  now: number,
-): ServerActionResult {
-  if (state.phase !== "RoundActive") {
-    return error(state, "ROUND_ALREADY_RESOLVED");
-  }
-  if (state.currentTurnId !== turnIdToExpire) {
-    return error(state, "STALE_TURN");
-  }
-  if (state.turnExpiresAt !== undefined && now < state.turnExpiresAt) {
-    return error(state, "STALE_TURN");
-  }
-
-  const result = resolveTimeout(state, now);
-  return success(result.state, result.roundResult);
 }

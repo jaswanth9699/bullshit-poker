@@ -119,8 +119,6 @@ function roomPathFromApi(
     return { code, roomPath: "/room/actions/submit-claim" };
   if (suffix === "/actions/call-bullshit")
     return { code, roomPath: "/room/actions/call-bullshit" };
-  if (suffix === "/actions/timeout")
-    return { code, roomPath: "/room/actions/timeout" };
   return null;
 }
 

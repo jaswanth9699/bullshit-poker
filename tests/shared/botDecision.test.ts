@@ -99,6 +99,52 @@ test("bot raises with a truthful higher claim when it can prove one from its own
   assert.deepEqual(decision.claim, { handType: "HIGH_CARD", primaryRank: "A" });
 });
 
+test("bot raises instead of calling when a higher claim is provable", () => {
+  const decision = decideBotAction(
+    stateWithBot({
+      botCards: [createCard("A", "S"), createCard("A", "H")],
+      currentClaim: { id: "claim-1", handType: "PAIR", primaryRank: "K", playerId: "human", sequence: 1 },
+      currentTurnPlayerId: "bot"
+    }),
+    "bot",
+    { callBullshitAtOrBelow: 1, raiseBluffMinimumEstimate: 0.38, simulationSamples: 16 }
+  );
+
+  assert.equal(decision.type, "SUBMIT_CLAIM");
+  if (decision.type !== "SUBMIT_CLAIM") return;
+  assert.equal(decision.reason, "RAISE_WITH_TRUTHFUL_CLAIM");
+  assert.deepEqual(decision.claim, { handType: "PAIR", primaryRank: "A" });
+});
+
+test("off-turn bot waits instead of sniping when it has a truthful future raise", () => {
+  const decision = decideBotAction(
+    stateWithBot({
+      botCards: [createCard("A", "S"), createCard("A", "H")],
+      currentClaim: { id: "claim-1", handType: "PAIR", primaryRank: "K", playerId: "human", sequence: 1 },
+      currentTurnPlayerId: "human"
+    }),
+    "bot"
+  );
+
+  assert.equal(decision.type, "WAIT");
+});
+
+test("off-turn bot still calls a nearly impossible claim without a truthful future raise", () => {
+  const decision = decideBotAction(
+    stateWithBot({
+      botCards: [createCard("2", "S")],
+      currentClaim: { id: "claim-four", handType: "FOUR_OF_A_KIND", primaryRank: "A", playerId: "human", sequence: 1 },
+      currentTurnPlayerId: "human"
+    }),
+    "bot"
+  );
+
+  assert.equal(decision.type, "CALL_BULLSHIT");
+  if (decision.type !== "CALL_BULLSHIT") return;
+  assert.equal(decision.reason, "CALL_LOW_CONFIDENCE_CLAIM");
+  assert.equal(decision.targetClaimId, "claim-four");
+});
+
 test("bot calls BullShit when the current claim has very low support", () => {
   const decision = decideBotAction(
     stateWithBot({

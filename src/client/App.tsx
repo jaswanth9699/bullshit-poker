@@ -3,7 +3,6 @@ import {
   Bot,
   Check,
   CircleAlert,
-  Clock3,
   Copy,
   DoorOpen,
   Eye,
@@ -14,6 +13,7 @@ import {
   RefreshCw,
   ShieldAlert,
   Sparkles,
+  Star,
   Trash2,
   Trophy,
   UsersRound,
@@ -40,13 +40,18 @@ import {
   formatClaim,
   legalClaimsByHandType,
   playerName,
+  RANK_SHORT,
+  RANK_WORDS,
 } from "./claimUi";
 import type {
   Claim,
   ClaimTemplate,
+  HandType,
   PrivateGameView,
   PublicPlayerView,
+  Rank,
   RoomServerMessage,
+  Suit,
 } from "../shared/index.ts";
 
 const STORAGE_KEY = "bullshit-poker-seat";
@@ -80,10 +85,6 @@ function connectionLabel(status: ConnectionStatus): string {
 
 function canReconnect(status: ConnectionStatus): boolean {
   return status === "closed" || status === "error" || status === "idle";
-}
-
-function formatCountdownLabel(countdown: number): string {
-  return countdown > 0 ? `${countdown} sec` : "-- sec";
 }
 
 async function copyTextToClipboard(text: string): Promise<boolean> {
@@ -157,21 +158,6 @@ function assertOk(result: LifecycleWireResult): OkLifecycleWireResult {
   return result;
 }
 
-function useCountdown(view: PrivateGameView | null): number {
-  const [now, setNow] = useState(() => Date.now());
-
-  useEffect(() => {
-    const id = window.setInterval(() => setNow(Date.now()), 250);
-    return () => window.clearInterval(id);
-  }, []);
-
-  if (!view?.turnExpiresAt) return 0;
-  return Math.min(
-    Math.ceil(view.turnDurationMs / 1000),
-    Math.max(0, Math.ceil((view.turnExpiresAt - now) / 1000)),
-  );
-}
-
 export function App() {
   const [entryMode, setEntryMode] = useState<EntryMode>("create");
   const [displayName, setDisplayName] = useState("");
@@ -190,7 +176,6 @@ export function App() {
   const [lastRoundOpen, setLastRoundOpen] = useState(false);
   const socketRef = useRef<WebSocket | null>(null);
   const autoReconnectKeyRef = useRef<string | null>(null);
-  const countdown = useCountdown(view);
 
   useEffect(() => {
     return () => socketRef.current?.close();
@@ -428,7 +413,6 @@ export function App() {
     >
       <TopBar
         canCopyRoomCode={view.phase === "Lobby"}
-        countdown={countdown}
         roomCodeCopyState={roomCodeCopyState}
         status={connectionStatus}
         view={view}
@@ -459,7 +443,6 @@ export function App() {
         />
       ) : (
         <GameTable
-          countdown={countdown}
           view={view}
           onCallBullshit={callBullshit}
           onOpenClaimPicker={() => setClaimPickerOpen(true)}
@@ -672,7 +655,6 @@ function EntryScreen(props: {
 
 function TopBar(props: {
   canCopyRoomCode: boolean;
-  countdown: number;
   roomCodeCopyState: RoomCodeCopyState;
   status: ConnectionStatus;
   view: PrivateGameView;
@@ -720,10 +702,6 @@ function TopBar(props: {
           <Radio size={14} />
           {connectionLabel(props.status)}
         </span>
-        <span className="timer-pill">
-          <Clock3 size={15} />
-          {formatCountdownLabel(props.countdown)}
-        </span>
         {props.view.phase !== "Lobby" && (
           <span className="card-count-pill">
             <Layers size={15} />
@@ -739,14 +717,16 @@ function TopBar(props: {
             Reconnect
           </button>
         )}
-        <button
-          className="icon-button"
-          aria-label="Leave local seat"
-          title="Leave local seat"
-          onClick={props.onLeave}
-        >
-          <X size={17} />
-        </button>
+        {props.view.phase === "Lobby" && (
+          <button
+            className="icon-button"
+            aria-label="Leave local seat"
+            title="Leave local seat"
+            onClick={props.onLeave}
+          >
+            <X size={17} />
+          </button>
+        )}
       </div>
     </header>
   );
@@ -803,7 +783,6 @@ function Lobby(props: {
 }
 
 function GameTable(props: {
-  countdown: number;
   view: PrivateGameView;
   onCallBullshit: () => void;
   onOpenClaimPicker: () => void;
@@ -832,6 +811,12 @@ function GameTable(props: {
     : isGameOver
       ? "Last player standing"
       : "No previous claim yet";
+  const phaseLabel =
+    props.view.phase === "RoundActive"
+      ? "In play"
+      : props.view.phase === "ResolvingRound"
+        ? "Review"
+        : "Game over";
   const isFinalDecision = Boolean(
     props.view.currentClaim &&
     props.view.currentTurnPlayerId === props.view.viewerPlayerId &&
@@ -847,6 +832,7 @@ function GameTable(props: {
             player={player}
             active={player.id === props.view.currentTurnPlayerId}
             isViewer={player.id === props.view.viewerPlayerId}
+            isRoundStarter={player.id === props.view.startingPlayerId}
             compact
           />
         ))}
@@ -855,9 +841,7 @@ function GameTable(props: {
       <section className="claim-zone">
         <div className="claim-meta">
           <span>Round {props.view.roundNumber}</span>
-          <span>
-            {isGameOver ? "Game over" : formatCountdownLabel(props.countdown)}
-          </span>
+          <span>{phaseLabel}</span>
         </div>
         {isGameOver && (
           <div className="winner-mark" aria-label="Game winner">
@@ -934,9 +918,14 @@ function PlayerSeat(props: {
   active?: boolean;
   compact?: boolean;
   isViewer?: boolean;
+  isRoundStarter?: boolean;
   canRemove?: boolean;
   onRemove?: () => void;
 }) {
+  const statusText = props.player.eliminated
+    ? "Eliminated"
+    : `${props.player.cardCount} cards`;
+
   return (
     <div
       className={`player-seat ${props.active ? "active" : ""} ${props.compact ? "compact" : ""}`}
@@ -945,13 +934,23 @@ function PlayerSeat(props: {
         {props.player.isBot ? <Bot size={18} /> : <UsersRound size={18} />}
       </div>
       <div className="seat-copy">
-        <strong>{props.player.name}</strong>
-        <span>{props.player.cardCount} cards</span>
+        <strong className="seat-name-row">
+          <span>{props.player.name}</span>
+          {props.isRoundStarter && (
+            <Star
+              size={14}
+              className="starter-star"
+              aria-label="Round starter"
+            />
+          )}
+        </strong>
+        <span>{statusText}</span>
       </div>
       <div className="seat-badges">
         {props.isViewer && <span className="seat-flag you">you</span>}
-        {!props.player.connected && <span className="seat-flag">offline</span>}
-        {props.player.eliminated && <span className="seat-flag">out</span>}
+        {!props.player.connected && !props.player.eliminated && (
+          <span className="seat-flag">offline</span>
+        )}
       </div>
       {props.canRemove && (
         <button
@@ -980,6 +979,230 @@ function ClaimTimeline(props: { view: PrivateGameView }) {
           </div>
         ))
       )}
+    </div>
+  );
+}
+
+type ClaimGroup = {
+  handType: HandType;
+  label: string;
+  claims: ClaimTemplate[];
+};
+
+const SUIT_LABELS: Record<Suit, string> = {
+  S: "♠ Spades",
+  H: "♥ Hearts",
+  D: "♦ Diamonds",
+  C: "♣ Clubs",
+};
+
+function usesStructuredClaimBuilder(handType: HandType): boolean {
+  return (
+    handType === "HIGH_CARD" ||
+    handType === "PAIR" ||
+    handType === "TWO_PAIR" ||
+    handType === "THREE_OF_A_KIND" ||
+    handType === "STRAIGHT" ||
+    handType === "FLUSH" ||
+    handType === "FULL_HOUSE" ||
+    handType === "FOUR_OF_A_KIND" ||
+    handType === "STRAIGHT_FLUSH"
+  );
+}
+
+function usesSecondaryRank(handType: HandType): boolean {
+  return handType === "TWO_PAIR" || handType === "FULL_HOUSE";
+}
+
+function usesSuit(handType: HandType): boolean {
+  return handType === "FLUSH" || handType === "STRAIGHT_FLUSH";
+}
+
+function uniqueRanks(
+  claims: readonly ClaimTemplate[],
+  rankKey: "primaryRank" | "secondaryRank",
+): Rank[] {
+  const seen = new Set<Rank>();
+  const ranks: Rank[] = [];
+  for (const claim of claims) {
+    const rank = claim[rankKey];
+    if (!rank || seen.has(rank)) continue;
+    seen.add(rank);
+    ranks.push(rank);
+  }
+  return ranks;
+}
+
+function uniqueSuits(claims: readonly ClaimTemplate[]): Suit[] {
+  const seen = new Set<Suit>();
+  const suits: Suit[] = [];
+  for (const claim of claims) {
+    if (!claim.suit || seen.has(claim.suit)) continue;
+    seen.add(claim.suit);
+    suits.push(claim.suit);
+  }
+  return suits;
+}
+
+function rankSelectLabel(handType: HandType, rankKey: "primary" | "secondary") {
+  if (handType === "HIGH_CARD") {
+    return "Card Rank";
+  }
+  if (handType === "FULL_HOUSE") {
+    return rankKey === "primary" ? "Three Rank" : "Pair Rank";
+  }
+  if (handType === "TWO_PAIR") {
+    return rankKey === "primary" ? "High Pair" : "Low Pair";
+  }
+  if (handType === "THREE_OF_A_KIND") {
+    return "Three Rank";
+  }
+  if (handType === "STRAIGHT" || handType === "STRAIGHT_FLUSH") {
+    return "High Rank";
+  }
+  if (handType === "FLUSH") {
+    return "High Rank";
+  }
+  if (handType === "FOUR_OF_A_KIND") {
+    return "Four Rank";
+  }
+  return "Pair Rank";
+}
+
+function rankOptionLabel(handType: HandType, rank: Rank): string {
+  if (handType === "HIGH_CARD") {
+    return `${RANK_SHORT[rank]} high`;
+  }
+  if (handType === "STRAIGHT" || handType === "STRAIGHT_FLUSH") {
+    return `${RANK_SHORT[rank]}-high`;
+  }
+  if (handType === "FLUSH") {
+    return `${RANK_SHORT[rank]}-high`;
+  }
+  return RANK_WORDS[rank];
+}
+
+function StructuredClaimBuilder(props: {
+  group: ClaimGroup;
+  onSubmit: (claim: ClaimTemplate) => void;
+}) {
+  const primaryRanks = useMemo(
+    () => uniqueRanks(props.group.claims, "primaryRank"),
+    [props.group.claims],
+  );
+  const [primaryRank, setPrimaryRank] = useState<Rank | "">(
+    primaryRanks[0] ?? "",
+  );
+  const needsSecondaryRank = usesSecondaryRank(props.group.handType);
+  const needsSuit = usesSuit(props.group.handType);
+  const secondaryRanks = useMemo(() => {
+    if (!needsSecondaryRank) return [];
+    return uniqueRanks(
+      props.group.claims.filter((claim) => claim.primaryRank === primaryRank),
+      "secondaryRank",
+    );
+  }, [needsSecondaryRank, primaryRank, props.group.claims]);
+  const [secondaryRank, setSecondaryRank] = useState<Rank | "">(
+    secondaryRanks[0] ?? "",
+  );
+  const suitOptions = useMemo(() => {
+    if (!needsSuit) return [];
+    return uniqueSuits(
+      props.group.claims.filter((claim) => claim.primaryRank === primaryRank),
+    );
+  }, [needsSuit, primaryRank, props.group.claims]);
+  const [suit, setSuit] = useState<Suit | "">(suitOptions[0] ?? "");
+
+  useEffect(() => {
+    if (primaryRank && primaryRanks.includes(primaryRank)) return;
+    setPrimaryRank(primaryRanks[0] ?? "");
+  }, [primaryRank, primaryRanks]);
+
+  useEffect(() => {
+    if (!needsSecondaryRank) {
+      setSecondaryRank("");
+      return;
+    }
+    if (secondaryRank && secondaryRanks.includes(secondaryRank)) return;
+    setSecondaryRank(secondaryRanks[0] ?? "");
+  }, [needsSecondaryRank, secondaryRank, secondaryRanks]);
+
+  useEffect(() => {
+    if (!needsSuit) {
+      setSuit("");
+      return;
+    }
+    if (suit && suitOptions.includes(suit)) return;
+    setSuit(suitOptions[0] ?? "");
+  }, [needsSuit, suit, suitOptions]);
+
+  const selectedClaim = props.group.claims.find((claim) => {
+    if (claim.primaryRank !== primaryRank) return false;
+    if (needsSecondaryRank && claim.secondaryRank !== secondaryRank) return false;
+    if (needsSuit && claim.suit !== suit) return false;
+    return true;
+  });
+
+  return (
+    <div className="structured-claim-builder">
+      <div className="claim-select-grid">
+        <label>
+          <span>{rankSelectLabel(props.group.handType, "primary")}</span>
+          <select
+            value={primaryRank}
+            onChange={(event) => setPrimaryRank(event.target.value as Rank)}
+          >
+            {primaryRanks.map((rank) => (
+              <option key={rank} value={rank}>
+                {rankOptionLabel(props.group.handType, rank)}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        {needsSecondaryRank && (
+          <label>
+            <span>{rankSelectLabel(props.group.handType, "secondary")}</span>
+            <select
+              value={secondaryRank}
+              onChange={(event) =>
+                setSecondaryRank(event.target.value as Rank)
+              }
+            >
+              {secondaryRanks.map((rank) => (
+                <option key={rank} value={rank}>
+                  {rankOptionLabel(props.group.handType, rank)}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+
+        {needsSuit && (
+          <label>
+            <span>Suit</span>
+            <select
+              value={suit}
+              onChange={(event) => setSuit(event.target.value as Suit)}
+            >
+              {suitOptions.map((option) => (
+                <option key={option} value={option}>
+                  {SUIT_LABELS[option]}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+      </div>
+
+      <button
+        className="primary-action structured-submit"
+        disabled={!selectedClaim}
+        onClick={() => selectedClaim && props.onSubmit(selectedClaim)}
+      >
+        <Plus size={18} />
+        {selectedClaim ? formatClaim(selectedClaim) : "Select Claim"}
+      </button>
     </div>
   );
 }
@@ -1036,17 +1259,25 @@ function ClaimPicker(props: {
               ))}
             </div>
 
-            <div className="claim-options">
-              {activeGroup.claims.map((claim) => (
-                <button
-                  key={claimKey(claim)}
-                  onClick={() => props.onSubmit(claim)}
-                >
-                  <span>{compactClaim(claim)}</span>
-                  <strong>{formatClaim(claim)}</strong>
-                </button>
-              ))}
-            </div>
+            {usesStructuredClaimBuilder(activeGroup.handType) ? (
+              <StructuredClaimBuilder
+                key={activeGroup.handType}
+                group={activeGroup}
+                onSubmit={props.onSubmit}
+              />
+            ) : (
+              <div className="claim-options">
+                {activeGroup.claims.map((claim) => (
+                  <button
+                    key={claimKey(claim)}
+                    onClick={() => props.onSubmit(claim)}
+                  >
+                    <span>{compactClaim(claim)}</span>
+                    <strong>{formatClaim(claim)}</strong>
+                  </button>
+                ))}
+              </div>
+            )}
           </>
         )}
       </section>
@@ -1073,15 +1304,15 @@ function LastRoundSheet(props: { view: PrivateGameView; onClose: () => void }) {
 
         <div className="result-summary">
           <ResultLine
-            label="Caller"
+            label="BullShit called by"
             value={
               result.callerPlayerId
                 ? playerName(props.view.players, result.callerPlayerId)
-                : "No BullShit caller"
+                : "No one"
             }
           />
           <ResultLine
-            label="Claimant"
+            label="Claimed by"
             value={playerName(props.view.players, result.claimantPlayerId)}
           />
           <ResultLine
@@ -1097,15 +1328,6 @@ function LastRoundSheet(props: { view: PrivateGameView; onClose: () => void }) {
           <ResultLine
             label="Penalty"
             value={playerName(props.view.players, result.penaltyPlayerId)}
-          />
-          <ResultLine
-            label={props.view.phase === "GameOver" ? "Winner" : "Next"}
-            value={playerName(
-              props.view.players,
-              props.view.phase === "GameOver"
-                ? props.view.winnerPlayerId
-                : result.nextStartingPlayerId,
-            )}
           />
         </div>
 

@@ -44,7 +44,6 @@ export type RoomRouteAuthority = {
     envelope: ClientActionEnvelope<CallBullshitPayload>,
     now: number,
   ): Promise<ServerActionResult>;
-  timeout(turnId: string, now: number): Promise<ServerActionResult>;
 };
 
 export type RoomRouteContext = {
@@ -263,17 +262,6 @@ export async function handleRoomHttpRequest(
           await context.authority.callBullshit(envelope, now),
           envelope?.playerId,
         ),
-      );
-    }
-
-    case "/room/actions/timeout": {
-      const turnId = stringField(body, "turnId");
-      if (!turnId) {
-        return errorResponse("INVALID_TIMEOUT_REQUEST", 400);
-      }
-
-      return jsonResponse(
-        actionWireResult(await context.authority.timeout(turnId, now)),
       );
     }
 

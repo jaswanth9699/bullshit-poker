@@ -121,7 +121,17 @@ test("RoomAuthority serializes race outcome through persisted state", async () =
 
 test("RoomAuthority returns ROOM_NOT_FOUND when uninitialized", async () => {
   const authority = new RoomAuthority(new MemoryRoomStateStore());
-  const result = await authority.timeout("missing-turn", 1_000);
+  const result = await authority.submitClaim(
+    {
+      requestId: "missing",
+      roomId: "room-1",
+      playerId: "A",
+      stateRevision: 1,
+      turnId: "turn-1",
+      payload: { claim: { handType: "HIGH_CARD", primaryRank: "A" } },
+    },
+    1_000,
+  );
 
   assert.deepEqual(result, {
     ok: false,

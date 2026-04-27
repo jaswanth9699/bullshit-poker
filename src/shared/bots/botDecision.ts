@@ -44,6 +44,8 @@ export type BotTuning = {
 };
 
 const DEFAULT_SIMULATION_SAMPLES = 128;
+const MIN_PLAYABLE_RAISE_ESTIMATE_BEFORE_CALLING = 0.24;
+const OFF_TURN_CALL_THRESHOLD_DISCOUNT = 0.14;
 
 export const DEFAULT_BOT_TUNING: BotTuning = {
   callBullshitAtOrBelow: 0.28,
@@ -244,6 +246,13 @@ function sortedClaims(claims: readonly Claim[]): Claim[] {
   return [...claims].sort(compareClaims);
 }
 
+function chooseTruthfulClaim(
+  legalClaims: readonly Claim[],
+  ownCards: readonly Card[]
+): Claim | undefined {
+  return sortedClaims(legalClaims).find((claim) => findClaimProof(claim, ownCards));
+}
+
 function chooseConservativeBluff(
   legalClaims: readonly Claim[],
   ownCards: readonly Card[],
@@ -333,35 +342,41 @@ export function decideBotAction(
   const riskFactor = Math.min(1, Math.max(0, (bot.cardCount - 1) / 4));
   const callThreshold = Math.max(0.12, tuning.callBullshitAtOrBelow - riskFactor * 0.08);
 
-  const legalClaims = state.currentTurnPlayerId === bot.id && state.currentTurnId
-    ? getLegalClaimsAfter(currentClaim)
-    : [];
+  const isBotTurn = state.currentTurnPlayerId === bot.id && Boolean(state.currentTurnId);
+  const legalClaims = isBotTurn ? getLegalClaimsAfter(currentClaim) : [];
 
-  if (canCall && state.currentTurnPlayerId === bot.id && legalClaims.length === 0) {
-    return {
-      type: "CALL_BULLSHIT",
-      reason: "CALL_NO_LEGAL_RAISE",
-      claimWindowId: state.activeClaimWindow!.id,
-      targetClaimId: currentClaim!.id!,
-      estimatedTruth: claimEstimate
-    };
-  }
+  if (!isBotTurn) {
+    if (!canCall || !currentClaim) {
+      return { type: "WAIT", reason: "NO_ACTION_AVAILABLE" };
+    }
 
-  if (canCall && claimEstimate < callThreshold) {
-    return {
-      type: "CALL_BULLSHIT",
-      reason: "CALL_LOW_CONFIDENCE_CLAIM",
-      claimWindowId: state.activeClaimWindow!.id,
-      targetClaimId: currentClaim!.id!,
-      estimatedTruth: claimEstimate
-    };
-  }
+    const futureClaims = getLegalClaimsAfter(currentClaim);
+    const hasTruthfulFutureRaise = Boolean(chooseTruthfulClaim(futureClaims, bot.roundCards));
+    const offTurnCallThreshold = Math.max(0.04, callThreshold - OFF_TURN_CALL_THRESHOLD_DISCOUNT);
 
-  if (state.currentTurnPlayerId !== bot.id || !state.currentTurnId) {
+    if (!hasTruthfulFutureRaise && claimEstimate < offTurnCallThreshold) {
+      return {
+        type: "CALL_BULLSHIT",
+        reason: "CALL_LOW_CONFIDENCE_CLAIM",
+        claimWindowId: state.activeClaimWindow!.id,
+        targetClaimId: currentClaim.id!,
+        estimatedTruth: claimEstimate
+      };
+    }
+
     return { type: "WAIT", reason: "NO_ACTION_AVAILABLE" };
   }
 
   if (legalClaims.length === 0) {
+    if (canCall && currentClaim) {
+      return {
+        type: "CALL_BULLSHIT",
+        reason: "CALL_NO_LEGAL_RAISE",
+        claimWindowId: state.activeClaimWindow!.id,
+        targetClaimId: currentClaim.id!,
+        estimatedTruth: claimEstimate
+      };
+    }
     return { type: "WAIT", reason: "NO_ACTION_AVAILABLE" };
   }
 
@@ -371,14 +386,21 @@ export function decideBotAction(
       type: "SUBMIT_CLAIM",
       reason: currentClaim ? "RAISE_WITH_TRUTHFUL_CLAIM" : "OPEN_WITH_LOWEST_TRUTHFUL_CLAIM",
       claim: bestPressureClaim.claim,
-      turnId: state.currentTurnId,
+      turnId: state.currentTurnId!,
       claimWindowId: state.activeClaimWindow?.id,
       estimatedTruth: 1
     };
   }
 
   const safetyThreshold = tuning.raiseBluffMinimumEstimate + riskFactor * 0.08;
-  if (canCall && claimEstimate < safetyThreshold && (!bestPressureClaim || bestPressureClaim.estimate < 0.18)) {
+  const playableRaiseThreshold = Math.min(
+    safetyThreshold,
+    MIN_PLAYABLE_RAISE_ESTIMATE_BEFORE_CALLING + riskFactor * 0.04
+  );
+  const hasPlayableRaise =
+    bestPressureClaim !== undefined && bestPressureClaim.estimate >= playableRaiseThreshold;
+
+  if (canCall && claimEstimate < callThreshold && !hasPlayableRaise) {
     return {
       type: "CALL_BULLSHIT",
       reason: "CALL_LOW_CONFIDENCE_CLAIM",
@@ -396,9 +418,20 @@ export function decideBotAction(
       type: "SUBMIT_CLAIM",
       reason: "RAISE_WITH_LOWEST_CONSERVATIVE_BLUFF",
       claim: bluff.claim,
-      turnId: state.currentTurnId,
+      turnId: state.currentTurnId!,
       claimWindowId: state.activeClaimWindow?.id,
       estimatedTruth: bluff.estimate
+    };
+  }
+
+  if (hasPlayableRaise) {
+    return {
+      type: "SUBMIT_CLAIM",
+      reason: "RAISE_WITH_LOWEST_CONSERVATIVE_BLUFF",
+      claim: bestPressureClaim.claim,
+      turnId: state.currentTurnId!,
+      claimWindowId: state.activeClaimWindow?.id,
+      estimatedTruth: bestPressureClaim.estimate
     };
   }
 

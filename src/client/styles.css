@@ -349,7 +349,6 @@ input:focus {
 }
 
 .connection-pill,
-.timer-pill,
 .card-count-pill {
   display: inline-flex;
   align-items: center;
@@ -451,10 +450,24 @@ input:focus {
   display: grid;
 }
 
-.seat-copy strong {
+.seat-copy strong,
+.seat-name-row span {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.seat-name-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+
+.starter-star {
+  flex: 0 0 auto;
+  color: var(--gold);
+  fill: var(--gold);
 }
 
 .seat-copy span,
@@ -853,6 +866,46 @@ input:focus {
   font-size: 1rem;
 }
 
+.structured-claim-builder {
+  display: grid;
+  gap: 12px;
+}
+
+.claim-select-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.claim-select-grid label {
+  display: grid;
+  gap: 6px;
+}
+
+.claim-select-grid span {
+  color: #76633b;
+  font-size: 0.78rem;
+  font-weight: 950;
+  text-transform: uppercase;
+}
+
+.claim-select-grid select {
+  width: 100%;
+  min-height: 48px;
+  border: 1px solid rgba(25, 20, 14, 0.28);
+  border-radius: 8px;
+  background: #fffdf7;
+  color: var(--ink);
+  padding: 0 10px;
+  font: inherit;
+  font-weight: 950;
+  box-shadow: 0 8px 18px rgba(25, 20, 14, 0.12);
+}
+
+.structured-submit {
+  width: 100%;
+  justify-content: center;
+}
+
 .empty-claim-state {
   display: grid;
   place-items: center;
@@ -921,6 +974,10 @@ input:focus {
   }
 
   .claim-options {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .claim-select-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }

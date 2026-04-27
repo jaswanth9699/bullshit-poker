@@ -259,8 +259,8 @@ export function joinRoom(
   state: GameState,
   input: JoinRoomInput,
 ): LifecycleResult {
-  if (state.phase !== "Lobby") {
-    return lifecycleError(state, "GAME_ALREADY_STARTED");
+  if (state.phase === "Closed") {
+    return lifecycleError(state, "ROOM_CLOSED");
   }
   if (!validatePlayerPin(input.pin)) {
     return lifecycleError(state, "INVALID_PIN_FORMAT");
@@ -319,6 +319,10 @@ export function joinRoom(
       reconnectToken,
       reclaimed: true,
     };
+  }
+
+  if (state.phase !== "Lobby") {
+    return lifecycleError(state, "GAME_ALREADY_STARTED");
   }
 
   if (state.players.length >= MAX_PLAYERS) {
@@ -494,7 +498,7 @@ export function startGame(
     activeClaimWindow: undefined,
     claimHistory: [],
     turnStartedAt: input.now,
-    turnExpiresAt: input.now + state.turnDurationMs,
+    turnExpiresAt: undefined,
     lastRoundResult: undefined,
     winnerPlayerId: undefined,
   };
@@ -649,7 +653,7 @@ export function advanceToNextRound(
       activeClaimWindow: undefined,
       claimHistory: [],
       turnStartedAt: input.now,
-      turnExpiresAt: input.now + state.turnDurationMs,
+      turnExpiresAt: undefined,
       winnerPlayerId: undefined,
     },
   };

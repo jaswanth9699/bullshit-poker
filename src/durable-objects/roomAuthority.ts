@@ -1,7 +1,6 @@
 import {
   applyCallBullshit,
   applySubmitClaim,
-  applyTimeout,
   addBotToRoom,
   advanceToNextRound,
   connectPlayer,
@@ -126,10 +125,6 @@ export class RoomAuthority {
     now: number,
   ): Promise<ServerActionResult> {
     return this.apply((state) => applyCallBullshit(state, envelope, now));
-  }
-
-  async timeout(turnId: string, now: number): Promise<ServerActionResult> {
-    return this.apply((state) => applyTimeout(state, turnId, now));
   }
 
   private async apply(
