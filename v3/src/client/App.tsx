@@ -68,6 +68,7 @@ import type {
   Suit,
 } from "../shared/index.ts";
 import { MAX_PLAYERS } from "../shared/index.ts";
+import { deriveVisualEvents, visualEventBus } from "./visualEvents.ts";
 
 const KineticScene = lazy(() => import("./KineticScene"));
 
@@ -303,14 +304,14 @@ export function App() {
     if (!isInRoom || historyGuardRef.current) return;
     historyGuardRef.current = true;
     window.history.pushState(
-      { bullshitPokerV2: true },
+      { bullshitPokerV3: true },
       "",
       window.location.href,
     );
     const handlePopState = () => {
       setLeaveOpen(true);
       window.history.pushState(
-        { bullshitPokerV2: true },
+        { bullshitPokerV3: true },
         "",
         window.location.href,
       );
@@ -342,6 +343,7 @@ export function App() {
         return false;
       }
     }
+    visualEventBus.publish(deriveVisualEvents(currentView, nextView));
     latestViewRef.current = nextView;
     setView(nextView);
     return true;
@@ -354,6 +356,7 @@ export function App() {
     socket?.close();
     autoReconnectKeyRef.current = null;
     latestViewRef.current = null;
+    visualEventBus.reset();
     removeCredential();
     setCredential(null);
     setView(null);

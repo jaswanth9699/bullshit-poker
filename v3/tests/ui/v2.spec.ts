@@ -126,10 +126,16 @@ for (const viewport of viewports) {
     ).toBeVisible();
     const canvas = page.locator(".kinetic-scene canvas");
     await expect(canvas).toBeVisible();
-    await expect(page.locator(".kinetic-scene")).toHaveAttribute(
+    const scene = page.locator(".kinetic-scene");
+    await expect(scene).toHaveAttribute(
       "data-scene-layout",
       viewport.name === "mobile" ? "mobile" : "desktop",
     );
+    await expect(scene).toHaveAttribute(
+      "data-quality",
+      viewport.name === "mobile" ? "balanced" : /^(full|balanced)$/,
+    );
+    await expect(scene).toHaveAttribute("data-scene-status", "ready");
     await page.waitForTimeout(500);
 
     const canvasBox = await canvas.boundingBox();
@@ -479,6 +485,7 @@ test("personal controls apply haptics and reduced effects", async ({
 
   const scene = page.locator('.kinetic-scene[data-effects="reduced"]');
   await expect(scene).toBeVisible();
+  await expect(scene).toHaveAttribute("data-quality", "reduced");
   const canvas = scene.locator("canvas");
   await expect(canvas).toBeVisible();
   const firstFrame = await canvas.screenshot();

@@ -1,5 +1,13 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
+import {
+  browserVisualCapabilities,
+  resolveVisualQuality,
+  VisualFrameLoop,
+  VISUAL_FRAME_PRIORITY,
+  VISUAL_QUALITY_CONFIG,
+  type VisualQualityPreference,
+} from "./visualRuntime.ts";
 
 type CardPose = readonly [
   x: number,
@@ -13,6 +21,7 @@ function cardTexture(
   rank: string,
   suit: string,
   accent: string,
+  anisotropy: number,
 ): THREE.CanvasTexture {
   const canvas = document.createElement("canvas");
   canvas.width = 320;
@@ -40,11 +49,11 @@ function cardTexture(
 
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
-  texture.anisotropy = 4;
+  texture.anisotropy = anisotropy;
   return texture;
 }
 
-function cardBackTexture(): THREE.CanvasTexture {
+function cardBackTexture(anisotropy: number): THREE.CanvasTexture {
   const canvas = document.createElement("canvas");
   canvas.width = 320;
   canvas.height = 448;
@@ -78,39 +87,78 @@ function cardBackTexture(): THREE.CanvasTexture {
 
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
-  texture.anisotropy = 4;
+  texture.anisotropy = anisotropy;
   return texture;
 }
 
-export default function KineticScene(props: { reducedEffects: boolean }) {
+export default function KineticScene(props: {
+  reducedEffects: boolean;
+  qualityPreference?: VisualQualityPreference;
+}) {
   const hostRef = useRef<HTMLDivElement>(null);
+  const [sceneStatus, setSceneStatus] = useState<
+    "initializing" | "ready" | "fallback"
+  >("initializing");
   const [systemReducedMotion, setSystemReducedMotion] = useState(
     () => window.matchMedia("(prefers-reduced-motion: reduce)").matches,
   );
+  const [compactViewport, setCompactViewport] = useState(
+    () => window.matchMedia("(max-width: 760px)").matches,
+  );
   const reducedMotion = props.reducedEffects || systemReducedMotion;
+  const quality = useMemo(() => {
+    const capabilities = browserVisualCapabilities();
+    capabilities.viewportWidth = compactViewport
+      ? Math.min(capabilities.viewportWidth, 760)
+      : Math.max(capabilities.viewportWidth, 761);
+    return resolveVisualQuality({
+      preference: props.qualityPreference ?? "auto",
+      reducedEffects: reducedMotion,
+      capabilities,
+    });
+  }, [compactViewport, props.qualityPreference, reducedMotion]);
 
   useEffect(() => {
-    const query = window.matchMedia("(prefers-reduced-motion: reduce)");
-    const updatePreference = () => setSystemReducedMotion(query.matches);
-    query.addEventListener("change", updatePreference);
-    return () => query.removeEventListener("change", updatePreference);
+    const motionQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const viewportQuery = window.matchMedia("(max-width: 760px)");
+    const updateMotion = () => setSystemReducedMotion(motionQuery.matches);
+    const updateViewport = () => setCompactViewport(viewportQuery.matches);
+    motionQuery.addEventListener("change", updateMotion);
+    viewportQuery.addEventListener("change", updateViewport);
+    return () => {
+      motionQuery.removeEventListener("change", updateMotion);
+      viewportQuery.removeEventListener("change", updateViewport);
+    };
   }, []);
 
   useEffect(() => {
     const host = hostRef.current;
-    if (!host || !window.WebGLRenderingContext) return;
+    if (!host || !window.WebGLRenderingContext) {
+      setSceneStatus("fallback");
+      return;
+    }
+
+    const qualityConfig = VISUAL_QUALITY_CONFIG[quality];
     const scene = new THREE.Scene();
     scene.fog = new THREE.FogExp2(0x070914, 0.105);
-
     const camera = new THREE.PerspectiveCamera(38, 1, 0.1, 40);
     camera.position.set(0, 0.2, 8.4);
 
-    const renderer = new THREE.WebGLRenderer({
-      alpha: true,
-      antialias: true,
-      powerPreference: "high-performance",
-    });
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.75));
+    let renderer: THREE.WebGLRenderer;
+    try {
+      renderer = new THREE.WebGLRenderer({
+        alpha: true,
+        antialias: qualityConfig.antialias,
+        powerPreference: "high-performance",
+      });
+    } catch {
+      setSceneStatus("fallback");
+      return;
+    }
+
+    renderer.setPixelRatio(
+      Math.min(window.devicePixelRatio || 1, qualityConfig.maxDevicePixelRatio),
+    );
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.setClearColor(0x000000, 0);
     renderer.domElement.setAttribute("aria-hidden", "true");
@@ -128,12 +176,12 @@ export default function KineticScene(props: { reducedEffects: boolean }) {
     const group = new THREE.Group();
     scene.add(group);
     const geometry = new THREE.BoxGeometry(1.45, 2.05, 0.055, 2, 2, 1);
-    const backTexture = cardBackTexture();
+    const backTexture = cardBackTexture(qualityConfig.textureAnisotropy);
     const cardFaces = [
-      cardTexture("A", "♦", "#cf1734"),
-      cardTexture("K", "♠", "#0a1020"),
-      cardTexture("Q", "♥", "#cf1734"),
-      cardTexture("J", "♣", "#0a1020"),
+      cardTexture("A", "♦", "#cf1734", qualityConfig.textureAnisotropy),
+      cardTexture("K", "♠", "#0a1020", qualityConfig.textureAnisotropy),
+      cardTexture("Q", "♥", "#cf1734", qualityConfig.textureAnisotropy),
+      cardTexture("J", "♣", "#0a1020", qualityConfig.textureAnisotropy),
     ];
     const cards = cardFaces.map((face, index) => {
       const edge = new THREE.MeshStandardMaterial({
@@ -178,15 +226,35 @@ export default function KineticScene(props: { reducedEffects: boolean }) {
       : [grid.material];
     gridMaterials.forEach((material) => {
       material.transparent = true;
-      material.opacity = 0.22;
+      material.opacity = quality === "reduced" ? 0.12 : 0.22;
     });
     scene.add(grid);
 
     let pointerX = 0;
     let pointerY = 0;
-    let frame = 0;
-    let visible = !document.hidden;
-    const startedAt = performance.now();
+    let contextAvailable = true;
+    const loop = new VisualFrameLoop({ maxDeltaMs: 50 });
+    loop.subscribe(VISUAL_FRAME_PRIORITY.view, ({ elapsedMs }) => {
+      const elapsed = elapsedMs / 1_000;
+      group.rotation.y +=
+        (pointerX * qualityConfig.pointerInfluence - group.rotation.y) * 0.025;
+      group.rotation.x +=
+        (-pointerY * qualityConfig.pointerInfluence - group.rotation.x) * 0.025;
+      cards.forEach((card, index) => {
+        card.position.y =
+          activePoses[index][1] +
+          Math.sin(elapsed * 0.52 + index * 1.4) *
+            qualityConfig.floatingAmplitude;
+        card.rotation.z =
+          activePoses[index][3] * 0.18 +
+          Math.sin(elapsed * 0.35 + index) *
+            0.025 *
+            qualityConfig.pointerInfluence;
+      });
+    });
+    loop.subscribe(VISUAL_FRAME_PRIORITY.render, () => {
+      if (contextAvailable) renderer.render(scene, camera);
+    });
 
     const resize = () => {
       const width = Math.max(1, host.clientWidth);
@@ -202,51 +270,62 @@ export default function KineticScene(props: { reducedEffects: boolean }) {
       camera.aspect = width / height;
       camera.updateProjectionMatrix();
       renderer.setSize(width, height, false);
-      if (reducedMotion) renderer.render(scene, camera);
+      loop.runFrame(performance.now());
     };
     const observer = new ResizeObserver(resize);
     observer.observe(host);
-    resize();
 
     const onPointerMove = (event: PointerEvent) => {
       pointerX = (event.clientX / window.innerWidth - 0.5) * 0.4;
       pointerY = (event.clientY / window.innerHeight - 0.5) * 0.3;
     };
     const onVisibility = () => {
-      visible = !document.hidden;
-      if (visible && reducedMotion) renderer.render(scene, camera);
+      if (document.hidden || quality === "reduced") {
+        loop.stop();
+      } else {
+        loop.start();
+      }
+      if (!document.hidden) loop.runFrame(performance.now());
     };
-    if (!reducedMotion) {
+    const onContextLost = (event: Event) => {
+      event.preventDefault();
+      contextAvailable = false;
+      loop.stop();
+      setSceneStatus("fallback");
+    };
+    const onContextRestored = () => {
+      contextAvailable = true;
+      setSceneStatus("ready");
+      resize();
+      if (quality !== "reduced" && !document.hidden) loop.start();
+    };
+
+    if (quality !== "reduced") {
       window.addEventListener("pointermove", onPointerMove, { passive: true });
     }
     document.addEventListener("visibilitychange", onVisibility);
-
-    const render = () => {
-      if (!reducedMotion) frame = requestAnimationFrame(render);
-      if (!visible) return;
-      const elapsed = (performance.now() - startedAt) / 1_000;
-      const motion = reducedMotion ? 0 : 1;
-      group.rotation.y += (pointerX - group.rotation.y) * 0.025;
-      group.rotation.x += (-pointerY - group.rotation.x) * 0.025;
-      cards.forEach((card, index) => {
-        card.position.y =
-          activePoses[index][1] +
-          Math.sin(elapsed * 0.52 + index * 1.4) * 0.16 * motion;
-        card.rotation.z =
-          activePoses[index][3] * 0.18 +
-          Math.sin(elapsed * 0.35 + index) * 0.025 * motion;
-      });
-      renderer.render(scene, camera);
-    };
-    render();
+    renderer.domElement.addEventListener("webglcontextlost", onContextLost);
+    renderer.domElement.addEventListener(
+      "webglcontextrestored",
+      onContextRestored,
+    );
+    resize();
+    if (quality !== "reduced" && !document.hidden) loop.start();
+    setSceneStatus("ready");
 
     return () => {
-      cancelAnimationFrame(frame);
+      loop.dispose();
       observer.disconnect();
-      if (!reducedMotion) {
-        window.removeEventListener("pointermove", onPointerMove);
-      }
+      window.removeEventListener("pointermove", onPointerMove);
       document.removeEventListener("visibilitychange", onVisibility);
+      renderer.domElement.removeEventListener(
+        "webglcontextlost",
+        onContextLost,
+      );
+      renderer.domElement.removeEventListener(
+        "webglcontextrestored",
+        onContextRestored,
+      );
       geometry.dispose();
       cards.forEach((card) => {
         const materials = card.userData.materials as THREE.Material[];
@@ -259,14 +338,20 @@ export default function KineticScene(props: { reducedEffects: boolean }) {
       renderer.dispose();
       renderer.domElement.remove();
     };
-  }, [reducedMotion]);
+  }, [quality]);
 
   return (
     <div
       ref={hostRef}
       className="kinetic-scene"
-      data-effects={reducedMotion ? "reduced" : "full"}
+      data-effects={quality === "reduced" ? "reduced" : "full"}
+      data-quality={quality}
+      data-scene-status={sceneStatus}
       aria-hidden="true"
-    />
+    >
+      {sceneStatus === "fallback" && (
+        <div className="kinetic-scene-fallback" data-scene-fallback="true" />
+      )}
+    </div>
   );
 }

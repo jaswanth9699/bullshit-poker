@@ -4,7 +4,7 @@ Status: Phase 0 baseline deployed; Living Bluff Table implementation pending
 Working branch: `codex/v3`  
 Development Worker: `bullshit-poker-v3`  
 Development URL: `https://bullshit-poker-v3.every-day.workers.dev/`  
-Active baseline deployment version: `ff0f8b46-e6c1-479f-a489-63d85c71b7b3`  
+Active Phase 1 deployment version: `05e0bac4-3585-48c8-8745-fcd983a8ecf5`  
 Protected production URLs: `bullshit-poker.every-day.workers.dev` and `bullshit-poker-v2.every-day.workers.dev`
 
 ## 1. Product Thesis
@@ -319,6 +319,23 @@ Three.js renderer + semantic React interface
 - Add the prioritized V3 frame loop and revision-aware visual event adapter.
 - Add renderer/context failure isolation and resource disposal.
 - Add deterministic scene test harness and canvas health checks.
+
+Checkpoint implemented:
+
+- `Auto`, `Full`, `Balanced`, and Reduced Effects quality resolution is isolated from gameplay.
+- Mobile defaults to Balanced; constrained desktop hardware may also select Balanced.
+- The visual frame loop executes ordered stages and clamps resumed-tab deltas.
+- Accepted private room snapshots produce deterministic, deduplicated visual events.
+- First connect and reconnect produce a settled `SYNC` event rather than replaying history.
+- Entry rendering pauses in hidden tabs, renders one stable Reduced Effects frame, and exposes a static context-failure fallback.
+- Unit and browser coverage verify the runtime without changing the authoritative game suite.
+
+Still pending in Phase 1:
+
+- WebGPU capability path with transparent WebGL fallback.
+- Runtime rolling-frame performance adaptation.
+- Shared Three.js resource manager for the lobby and live-table scenes.
+- Visual event consumption by the first Living Bluff Table prototype.
 
 ### Phase 2: Living Entry and Lobby
 

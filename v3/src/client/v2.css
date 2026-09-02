@@ -91,6 +91,17 @@ select:focus-visible {
   display: block;
 }
 
+.kinetic-scene[data-scene-status="fallback"] canvas {
+  display: none;
+}
+
+.kinetic-scene > .kinetic-scene-fallback {
+  z-index: 1;
+  background:
+    linear-gradient(180deg, transparent 35%, rgba(4, 5, 12, 0.42)),
+    radial-gradient(circle at 50% 72%, rgba(92, 166, 255, 0.2), transparent 34%);
+}
+
 .entry-shell {
   position: relative;
   isolation: isolate;
