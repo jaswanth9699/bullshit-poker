@@ -1,0 +1,20 @@
+name = "bullshit-poker-v3"
+main = "src/worker/worker.ts"
+compatibility_date = "2026-08-18"
+workers_dev = true
+preview_urls = false
+
+[assets]
+directory = "./dist"
+binding = "ASSETS"
+
+[[durable_objects.bindings]]
+name = "ROOM_DURABLE_OBJECT"
+class_name = "RoomDurableObjectV3"
+
+[[migrations]]
+tag = "v3-initial"
+new_sqlite_classes = ["RoomDurableObjectV3"]
+
+[vars]
+APP_VERSION = "3.0.0"
