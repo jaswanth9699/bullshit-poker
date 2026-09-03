@@ -1282,3 +1282,100 @@ select:focus-visible {
     font-size: 1.85rem;
   }
 }
+
+/* V3 Living Bluff Table scene layer */
+.living-table-scene {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.living-table-scene canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.living-table-scene[data-scene-status="fallback"] canvas {
+  display: none;
+}
+
+.living-table-fallback {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(
+      ellipse at 50% 58%,
+      rgba(116, 220, 255, 0.2),
+      transparent 38%
+    ),
+    radial-gradient(
+      ellipse at 62% 46%,
+      rgba(255, 91, 143, 0.12),
+      transparent 34%
+    );
+}
+
+.lobby-table-orbit > .living-table-scene {
+  inset: -8%;
+  opacity: 0.92;
+}
+
+.lobby-table-orbit > .lobby-table-rings,
+.lobby-table-orbit > .lobby-table-message {
+  z-index: 2;
+}
+
+.claim-zone > .living-table-scene {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  opacity: 0.48;
+  mask-image: linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0.94),
+    rgba(0, 0, 0, 0.44) 62%,
+    transparent 94%
+  );
+}
+
+.claim-zone > .living-table-scene[data-has-claim="true"] {
+  opacity: 0.66;
+  mask-image: linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0.88),
+    rgba(0, 0, 0, 0.74) 78%,
+    transparent 100%
+  );
+}
+
+.claim-zone > :not(.living-table-scene) {
+  z-index: 1;
+}
+
+html[data-reduced-effects="true"] .living-table-scene {
+  opacity: 0.34;
+  filter: saturate(0.74) contrast(0.94);
+}
+
+html[data-reduced-effects="true"]
+  .claim-zone
+  > .living-table-scene[data-has-claim="true"] {
+  opacity: 0.4;
+}
+
+@media (max-width: 760px) {
+  .lobby-table-orbit > .living-table-scene {
+    inset: -14% -10%;
+  }
+
+  .claim-zone > .living-table-scene {
+    opacity: 0.4;
+  }
+
+  .claim-zone > .living-table-scene[data-has-claim="true"] {
+    opacity: 0.6;
+  }
+}

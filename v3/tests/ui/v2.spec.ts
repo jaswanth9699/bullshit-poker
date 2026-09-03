@@ -332,6 +332,11 @@ test("mobile room lifecycle and V2 controls work together", async ({
   await expect(page.getByRole("heading", { name: "Lobby" })).toBeVisible();
   await expect(page.locator(".bluff-lobby")).toBeVisible();
   await expect(page.locator(".lobby-table-orbit")).toBeVisible();
+  const lobbyScene = page.locator('.living-table-scene[data-variant="lobby"]');
+  await expect(lobbyScene).toHaveAttribute("data-scene-status", "ready");
+  await expect(lobbyScene).toHaveAttribute("data-scene-layout", "mobile");
+  const lobbyScenePng = await lobbyScene.locator("canvas").screenshot();
+  expect(lobbyScenePng.byteLength).toBeGreaterThan(3_000);
   await expect(page.locator(".lobby-roster-row")).toHaveCount(1);
   await expect(page.getByRole("button", { name: "Share room" })).toBeVisible();
   await expect(
@@ -357,6 +362,11 @@ test("mobile room lifecycle and V2 controls work together", async ({
 
   await expect(page.getByText(/round 1/i)).toBeVisible();
   await expect(page.getByText(/^your cards$/i)).toBeVisible();
+  const gameScene = page.locator('.living-table-scene[data-variant="game"]');
+  await expect(gameScene).toHaveAttribute("data-scene-status", "ready");
+  await expect(gameScene).toHaveAttribute("data-scene-layout", "mobile");
+  const gameScenePng = await gameScene.locator("canvas").screenshot();
+  expect(gameScenePng.byteLength).toBeGreaterThan(3_000);
   await expect(page.getByRole("button", { name: "Leave game" })).toBeVisible();
   const tableDimensions = await page.evaluate(() => ({
     clientWidth: document.documentElement.clientWidth,
@@ -479,6 +489,16 @@ test("personal controls apply haptics and reduced effects", async ({
       .evaluate((element) => getComputedStyle(element).animationName),
   ).toBe("none");
 
+  const reducedTableScene = page.locator(
+    '.living-table-scene[data-effects="reduced"]',
+  );
+  await expect(reducedTableScene).toHaveAttribute("data-quality", "reduced");
+  const reducedTableCanvas = reducedTableScene.locator("canvas");
+  const firstTableFrame = await reducedTableCanvas.screenshot();
+  await page.waitForTimeout(250);
+  const secondTableFrame = await reducedTableCanvas.screenshot();
+  expect(firstTableFrame.equals(secondTableFrame)).toBe(true);
+
   await page.getByRole("button", { name: "Close settings" }).click();
   await page.getByRole("button", { name: "Leave game" }).click();
   await page.getByRole("button", { name: "Yes, leave" }).click();
@@ -494,12 +514,66 @@ test("personal controls apply haptics and reduced effects", async ({
   expect(firstFrame.equals(secondFrame)).toBe(true);
 });
 
+test("an accepted claim becomes a shared living-table card formation", async ({
+  browser,
+}) => {
+  const hostContext = await browser.newContext({
+    viewport: { width: 390, height: 844 },
+  });
+  const guestContext = await browser.newContext({
+    viewport: { width: 390, height: 844 },
+  });
+  const hostPage = await hostContext.newPage();
+  const guestPage = await guestContext.newPage();
+
+  try {
+    await hostPage.goto("/");
+    await createRoomFromEntry(hostPage, "Visual Host", "2468");
+    const roomCode = await hostPage.locator("[data-room-code]").innerText();
+
+    await guestPage.goto(`/?room=${roomCode}`);
+    await guestPage.getByPlaceholder("Enter your name").fill("Visual Guest");
+    await guestPage.getByRole("button", { name: "Continue" }).click();
+    await guestPage.getByPlaceholder("Enter your 4-digit PIN").fill("1357");
+    await guestPage.getByRole("button", { name: "Join Room" }).click();
+
+    await guestPage.getByRole("button", { name: "I am ready" }).click();
+    await hostPage.getByRole("button", { name: "I am ready" }).click();
+    await hostPage.getByRole("button", { name: "Start" }).click();
+    await expect(
+      hostPage.getByRole("button", { name: "Make Claim" }),
+    ).toBeEnabled();
+
+    await hostPage.getByRole("button", { name: "Make Claim" }).click();
+    await hostPage.getByRole("button", { name: "Pair", exact: true }).click();
+    await hostPage.getByRole("button", { name: "Pair of Twos" }).click();
+
+    await expect(
+      guestPage.getByText(/previous claim by Visual Host/i),
+    ).toBeVisible();
+    const scene = guestPage.locator('.living-table-scene[data-variant="game"]');
+    await expect(scene).toHaveAttribute("data-scene-status", "ready");
+    const claimCanvas = await scene.locator("canvas").screenshot();
+    expect(claimCanvas.byteLength).toBeGreaterThan(3_000);
+    await guestPage.screenshot({
+      path: "test-results/v3-live-claim-mobile.png",
+      fullPage: true,
+    });
+  } finally {
+    await hostContext.close();
+    await guestContext.close();
+  }
+});
+
 test("laptop table keeps its three-surface game layout", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/");
   await createRoomFromEntry(page, "Desktop Host", "1357");
   await page.getByRole("button", { name: "Add Bot" }).click();
   await expect(page.locator(".lobby-table-orbit")).toBeVisible();
+  const lobbyScene = page.locator('.living-table-scene[data-variant="lobby"]');
+  await expect(lobbyScene).toHaveAttribute("data-scene-status", "ready");
+  await expect(lobbyScene).toHaveAttribute("data-scene-layout", "desktop");
   const lobbyLayout = await page
     .locator(".lobby-world")
     .evaluate((element) => ({
@@ -518,6 +592,9 @@ test("laptop table keeps its three-surface game layout", async ({ page }) => {
   await page.getByRole("button", { name: "Start" }).click();
 
   await expect(page.getByText(/^your cards$/i)).toBeVisible();
+  const gameScene = page.locator('.living-table-scene[data-variant="game"]');
+  await expect(gameScene).toHaveAttribute("data-scene-status", "ready");
+  await expect(gameScene).toHaveAttribute("data-scene-layout", "desktop");
   const layout = await page.locator(".table-layout").evaluate((element) => {
     const style = getComputedStyle(element);
     return {

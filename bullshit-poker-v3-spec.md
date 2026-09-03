@@ -1,6 +1,6 @@
 # BullShit Poker V3 Specification
 
-Status: Phase 0 baseline deployed; Living Bluff Table implementation pending  
+Status: Phase 1 complete; first Living Bluff Table lobby and live-game prototype verified locally
 Working branch: `codex/v3`  
 Development Worker: `bullshit-poker-v3`  
 Development URL: `https://bullshit-poker-v3.every-day.workers.dev/`  
@@ -330,12 +330,11 @@ Checkpoint implemented:
 - Entry rendering pauses in hidden tabs, renders one stable Reduced Effects frame, and exposes a static context-failure fallback.
 - Unit and browser coverage verify the runtime without changing the authoritative game suite.
 
-Still pending in Phase 1:
+Deferred runtime enhancements:
 
 - WebGPU capability path with transparent WebGL fallback.
 - Runtime rolling-frame performance adaptation.
 - Shared Three.js resource manager for the lobby and live-table scenes.
-- Visual event consumption by the first Living Bluff Table prototype.
 
 ### Phase 2: Living Entry and Lobby
 
@@ -343,11 +342,29 @@ Still pending in Phase 1:
 - Create physical seat assembly, ready lighting, host treatment, and 2/6/10-player layouts.
 - Validate touch orbit, safe framing, responsive labels, and reduced effects.
 
+Prototype checkpoint implemented:
+
+- The existing semantic lobby orbit now contains an independent dark-glass Three.js table layer.
+- Up to ten authoritative player seats are represented by quality-aware human, bot, viewer, current-turn, disconnected, and eliminated light states.
+- The scene uses distinct mobile and desktop camera framing and does not intercept touch or pointer input.
+- Existing HTML seat names, ready state, host controls, open seats, roster, leave flow, and start controls remain the accessible source of interaction.
+- Automated geometry and screenshot checks cover 2-, 6-, and 10-seat lobbies at 320px mobile, 390px mobile, tablet, and laptop widths.
+
 ### Phase 3: Claim Core and Live Table
 
 - Implement hand-category claim constructions.
 - Connect accepted claims, response windows, turns, reactions, and seat presence.
 - Preserve the semantic claim controls and private-card shelf.
+
+Prototype checkpoint implemented:
+
+- A shared live-table scene renders behind the existing semantic game controls without owning game state.
+- All ten hand categories generate claim-specific one-to-five-card physical formations from the accepted authoritative claim.
+- Card textures preserve true red hearts and diamonds and dark spades and clubs.
+- Accepted claims, BullShit calls, reveals, penalties, eliminations, reactions, new rounds, and match end feed short interruptible scene energy through the deduplicated visual event bus.
+- Unrelated realtime updates no longer recreate claim textures, and all generated textures, geometry, materials, listeners, observers, and WebGL resources are disposed on teardown.
+- Reduced Effects produces stable static scene frames; hidden tabs pause rendering; WebGL context loss exposes a nonblocking fallback.
+- A two-human browser test holds an accepted claim open and proves the synchronized mobile card formation is visible on the responding player's table.
 
 ### Phase 4: BullShit, Reveal, and Results
 

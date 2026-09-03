@@ -71,6 +71,7 @@ import { MAX_PLAYERS } from "../shared/index.ts";
 import { deriveVisualEvents, visualEventBus } from "./visualEvents.ts";
 
 const KineticScene = lazy(() => import("./KineticScene"));
+const LivingTableScene = lazy(() => import("./LivingTableScene"));
 
 const STORAGE_KEY = "bullshit-poker-v3-seat";
 const PREFERENCES_KEY = "bullshit-poker-v3-preferences";
@@ -736,6 +737,7 @@ export function App() {
 
       {view.phase === "Lobby" ? (
         <Lobby
+          reducedEffects={preferences.reducedEffects}
           view={view}
           onAddBot={addBot}
           onRemovePlayer={removePlayer}
@@ -751,6 +753,7 @@ export function App() {
         />
       ) : (
         <GameTable
+          reducedEffects={preferences.reducedEffects}
           view={view}
           onCallBullshit={callBullshit}
           onOpenClaimPicker={() => setClaimPickerOpen(true)}
@@ -1372,6 +1375,7 @@ const LOBBY_ORBIT_SLOTS: Record<number, readonly number[]> = {
 };
 
 function Lobby(props: {
+  reducedEffects: boolean;
   view: PrivateGameView;
   onAddBot: () => void;
   onRemovePlayer: (targetPlayerId: string) => void;
@@ -1452,6 +1456,13 @@ function Lobby(props: {
           </div>
 
           <div className="lobby-table-orbit" aria-hidden="true">
+            <Suspense fallback={null}>
+              <LivingTableScene
+                reducedEffects={props.reducedEffects}
+                variant="lobby"
+                view={props.view}
+              />
+            </Suspense>
             <div className="lobby-table-rings" />
             <div className="lobby-table-message">
               <span>{tableLabel}</span>
@@ -1609,6 +1620,7 @@ function Lobby(props: {
 }
 
 function GameTable(props: {
+  reducedEffects: boolean;
   view: PrivateGameView;
   onCallBullshit: () => void;
   onOpenClaimPicker: () => void;
@@ -1679,6 +1691,13 @@ function GameTable(props: {
       )}
 
       <section className={`claim-zone ${props.view.phase.toLowerCase()}`}>
+        <Suspense fallback={null}>
+          <LivingTableScene
+            reducedEffects={props.reducedEffects}
+            variant="game"
+            view={props.view}
+          />
+        </Suspense>
         <div className="claim-orbit" aria-hidden="true">
           <span />
           <span />
