@@ -1,10 +1,10 @@
 # BullShit Poker V3 Specification
 
-Status: Phase 1 complete; first Living Bluff Table lobby and live-game prototype verified locally
+Status: End-to-end V3 interface redesign deployed and verified on the isolated V3 Worker
 Working branch: `codex/v3`  
 Development Worker: `bullshit-poker-v3`  
 Development URL: `https://bullshit-poker-v3.every-day.workers.dev/`  
-Active Phase 1 deployment version: `05e0bac4-3585-48c8-8745-fcd983a8ecf5`  
+Active V3 deployment version: `17804536-bcfa-4f76-8e79-4a65ccb8a3ae`
 Protected production URLs: `bullshit-poker.every-day.workers.dev` and `bullshit-poker-v2.every-day.workers.dev`
 
 ## 1. Product Thesis
@@ -146,6 +146,19 @@ Motion is short and interruptible. The latest authoritative state always wins.
 - The winner occupies the surviving physical seat rather than appearing inside a generic celebration card.
 - Match summary, rematch readiness, leave, and host controls remain explicit HTML actions.
 - Rematch resets visual event history before the new match revision is consumed.
+
+### 5.7 Complete V3 Interface Composition
+
+- The entry experience is a full-bleed playable world with an asymmetrical title lockup and a compact Create/Join command deck instead of a conventional form card.
+- Create and Join use an opaque Deal-In command rail that preserves the table world while keeping every field legible above Three.js content.
+- The shared room header is a compact command strip with a signal dot, room code, card total, copy, share, settings, host end-game, reconnect, and leave actions.
+- The lobby is an unframed assembly stage: story and accessible roster occupy one lane, while the responsive physical table and seat orbit occupy the other.
+- Crowded lobbies switch to icon-only orbit seats while the complete names and host controls remain available in the roster; 2-, 6-, and 10-player layouts are collision tested.
+- The live game uses a horizontal player ribbon, full living-table claim arena, and a content-sized private-hand tray on desktop; mobile becomes a single thumb-reachable flow.
+- Claim Forge, Last Round, settings, share, leave, end-game, and result views use one high-contrast command-surface language with sticky headers and safe-area padding.
+- Hearts and diamonds use true card red; semantic state never depends on color alone.
+- Portrait mobile, narrow mobile, tablet, laptop, and mobile landscape have dedicated layout verification. No V3 screen depends on desktop-only Three.js framing.
+- The visual layer is imported after the inherited baseline as an isolated V3 theme, so the authoritative game and network contracts remain unchanged.
 
 ## 6. Input Model
 
@@ -370,6 +383,13 @@ Prototype checkpoint implemented:
 
 - Implement interruptible BullShit impact, deterministic reveal, proof highlighting, penalty travel, elimination, and winner sequences.
 - Rebuild Last Round and rematch transitions around settled authoritative state.
+
+Interface checkpoint implemented:
+
+- Entry, Deal-In, room command strip, lobby, live game, hand tray, Claim Forge, reveal, Last Round, settings, share, confirmation, and winner screens now share the complete V3 visual system.
+- Claim-category formations and authoritative scene reactions are live behind semantic HTML controls on mobile and desktop.
+- Sticky sheet headers, full-height reveal scrolling, content-sized desktop hands, touch-safe mobile actions, and mobile landscape composition are browser verified.
+- Final cinematic reveal choreography and penalty-card travel remain Phase 4 enhancements; the current authoritative reveal and penalty information is already complete and playable.
 
 ### Phase 5: Audio, Haptics, Polish, and Hardening
 

@@ -322,7 +322,7 @@ test("an active leaver leaves the rail without changing the frozen round pool", 
   }
 });
 
-test("mobile room lifecycle and V2 controls work together", async ({
+test("mobile room lifecycle and V3 controls work together", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 390, height: 844 });
@@ -539,6 +539,7 @@ test("an accepted claim becomes a shared living-table card formation", async ({
 
     await guestPage.getByRole("button", { name: "I am ready" }).click();
     await hostPage.getByRole("button", { name: "I am ready" }).click();
+    await expect(hostPage.getByRole("button", { name: "Start" })).toBeEnabled();
     await hostPage.getByRole("button", { name: "Start" }).click();
     await expect(
       hostPage.getByRole("button", { name: "Make Claim" }),
@@ -565,7 +566,7 @@ test("an accepted claim becomes a shared living-table card formation", async ({
   }
 });
 
-test("laptop table keeps its three-surface game layout", async ({ page }) => {
+test("laptop table keeps its two-surface game layout", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/");
   await createRoomFromEntry(page, "Desktop Host", "1357");
@@ -582,7 +583,7 @@ test("laptop table keeps its three-surface game layout", async ({ page }) => {
         document.documentElement.scrollWidth -
         document.documentElement.clientWidth,
     }));
-  expect(lobbyLayout.columns).toBe(3);
+  expect(lobbyLayout.columns).toBe(2);
   expect(lobbyLayout.overflow).toBe(0);
   await page.screenshot({
     path: "test-results/v2-lobby-laptop.png",
@@ -605,8 +606,8 @@ test("laptop table keeps its three-surface game layout", async ({ page }) => {
         document.documentElement.clientWidth,
     };
   });
-  expect(layout.columns).toBe(3);
-  expect(layout.width).toBeLessThanOrEqual(1380);
+  expect(layout.columns).toBe(2);
+  expect(layout.width).toBeLessThanOrEqual(1460);
   expect(layout.overflow).toBe(0);
   await page.screenshot({
     path: "test-results/v2-game-laptop.png",
@@ -618,6 +619,40 @@ test("laptop table keeps its three-surface game layout", async ({ page }) => {
   await expect(
     page.getByRole("heading", { name: "BullShit Poker" }),
   ).toBeVisible();
+});
+
+test("mobile landscape keeps the live table and private hand reachable", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 844, height: 390 });
+  await page.goto("/");
+  await createRoomFromEntry(page, "Landscape Host", "3141");
+  await page.getByRole("button", { name: "Add Bot" }).click();
+  await page.getByRole("button", { name: "I am ready" }).click();
+  await expect(page.getByRole("button", { name: "Start" })).toBeEnabled();
+  await page.getByRole("button", { name: "Start" }).click();
+
+  await expect(page.locator(".claim-zone")).toBeVisible();
+  await expect(page.locator(".hand-dock")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Make Claim" })).toBeVisible();
+  const landscape = await page.evaluate(() => ({
+    clientWidth: document.documentElement.clientWidth,
+    scrollWidth: document.documentElement.scrollWidth,
+    claimWidth: document.querySelector(".claim-zone")!.getBoundingClientRect()
+      .width,
+    handWidth: document.querySelector(".hand-dock")!.getBoundingClientRect()
+      .width,
+  }));
+  expect(landscape.scrollWidth).toBe(landscape.clientWidth);
+  expect(landscape.claimWidth).toBeGreaterThan(400);
+  expect(landscape.handWidth).toBeGreaterThan(200);
+  await page.screenshot({
+    path: "test-results/v3-game-mobile-landscape.png",
+    fullPage: true,
+  });
+
+  await page.getByRole("button", { name: "Leave game" }).click();
+  await page.getByRole("button", { name: "Yes, leave" }).click();
 });
 
 test("lobby orbit stays collision-free for every table size and viewport", async ({

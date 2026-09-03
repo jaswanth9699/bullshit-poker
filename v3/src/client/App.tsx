@@ -746,6 +746,7 @@ export function App() {
         />
       ) : view.phase === "GameOver" ? (
         <WinnerExitPage
+          reducedEffects={preferences.reducedEffects}
           view={view}
           onExit={requestLeave}
           onOpenLastRound={() => setLastRoundOpen(true)}
@@ -820,6 +821,7 @@ export function App() {
 }
 
 function WinnerExitPage(props: {
+  reducedEffects: boolean;
   view: PrivateGameView;
   onExit: () => void;
   onOpenLastRound: () => void;
@@ -838,6 +840,13 @@ function WinnerExitPage(props: {
 
   return (
     <main className="winner-layout">
+      <Suspense fallback={null}>
+        <LivingTableScene
+          reducedEffects={props.reducedEffects}
+          variant="game"
+          view={props.view}
+        />
+      </Suspense>
       <section className="winner-hero" aria-label="Game over">
         <div className="winner-trophy">
           <span className="winner-orbit" aria-hidden="true" />
@@ -1713,7 +1722,7 @@ function GameTable(props: {
               <Trophy size={30} />
             </div>
           )}
-          <span className="claim-core-label">Claim Core</span>
+          <span className="claim-core-label">Live Claim</span>
           <h2>{turnHeading}</h2>
           <div className="claim-byline">{previousClaim}</div>
         </div>
