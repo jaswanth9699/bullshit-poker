@@ -30,7 +30,7 @@ async function expectMaskedGamePin(
   ).toBe("disc");
 }
 
-async function expectCollisionFreeLobbyOrbit(page: Page): Promise<void> {
+async function expectCollisionFreeLobbySignals(page: Page): Promise<void> {
   const geometry = await page.locator(".lobby-orbit-zone").evaluate(() => {
     const candidates = Array.from(
       document.querySelectorAll<HTMLElement>(
@@ -164,9 +164,14 @@ for (const viewport of viewports) {
     await expect(page.getByPlaceholder("Enter your name")).toBeVisible();
     const rail = await page.locator(".deal-rail").boundingBox();
     expect(rail?.width).toBeLessThanOrEqual(
-      viewport.name === "mobile" ? viewport.width : 680,
+      viewport.name === "mobile" ? viewport.width : 520,
     );
-    expect(rail?.height).toBeLessThan(230);
+    if (viewport.name === "mobile") {
+      expect(rail?.height).toBeLessThanOrEqual(viewport.height * 0.5);
+      expect(rail?.height).toBeGreaterThanOrEqual(240);
+    } else {
+      expect(rail?.height).toBe(viewport.height);
+    }
     await page.screenshot({
       path: `test-results/v2-deal-rail-${viewport.name}.png`,
       fullPage: true,
@@ -566,7 +571,7 @@ test("an accepted claim becomes a shared living-table card formation", async ({
   }
 });
 
-test("laptop table keeps its two-surface game layout", async ({ page }) => {
+test("laptop table uses one continuous game arena", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/");
   await createRoomFromEntry(page, "Desktop Host", "1357");
@@ -606,7 +611,7 @@ test("laptop table keeps its two-surface game layout", async ({ page }) => {
         document.documentElement.clientWidth,
     };
   });
-  expect(layout.columns).toBe(2);
+  expect(layout.columns).toBe(1);
   expect(layout.width).toBeLessThanOrEqual(1460);
   expect(layout.overflow).toBe(0);
   await page.screenshot({
@@ -655,7 +660,7 @@ test("mobile landscape keeps the live table and private hand reachable", async (
   await page.getByRole("button", { name: "Yes, leave" }).click();
 });
 
-test("lobby orbit stays collision-free for every table size and viewport", async ({
+test("lobby signals stay collision-free for every table size and viewport", async ({
   browser,
 }) => {
   test.setTimeout(90_000);
@@ -671,14 +676,14 @@ test("lobby orbit stays collision-free for every table size and viewport", async
     try {
       await page.goto("/");
       await createRoomFromEntry(page, "Alexandria Maximum", "9753");
-      await expectCollisionFreeLobbyOrbit(page);
+      await expectCollisionFreeLobbySignals(page);
 
       for (let botNumber = 1; botNumber <= 9; botNumber += 1) {
         await page.getByRole("button", { name: "Add Bot" }).click();
         await expect(page.locator(".lobby-roster-row")).toHaveCount(
           botNumber + 1,
         );
-        await expectCollisionFreeLobbyOrbit(page);
+        await expectCollisionFreeLobbySignals(page);
 
         if (botNumber === 5) {
           await page.screenshot({
@@ -693,7 +698,7 @@ test("lobby orbit stays collision-free for every table size and viewport", async
   }
 });
 
-test("six long human names remain readable without orbit collisions", async ({
+test("six long human names remain readable without signal collisions", async ({
   browser,
 }) => {
   test.setTimeout(45_000);
@@ -734,7 +739,7 @@ test("six long human names remain readable without orbit collisions", async ({
     await expect(
       hostPage.getByLabel("Lobby table").getByText("Waiting on 6 players"),
     ).toBeVisible();
-    await expectCollisionFreeLobbyOrbit(hostPage);
+    await expectCollisionFreeLobbySignals(hostPage);
     await hostPage.screenshot({
       path: "test-results/v2-six-long-names-lobby-mobile.png",
       fullPage: true,

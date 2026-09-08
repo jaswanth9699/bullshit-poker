@@ -1,4 +1,4 @@
-const CACHE_NAME = "bullshit-poker-v3-shell-v1";
+const CACHE_NAME = "bullshit-poker-v3-shell-v2";
 const SHELL = ["/", "/manifest.webmanifest", "/icon.svg"];
 
 self.addEventListener("install", (event) => {

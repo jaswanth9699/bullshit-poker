@@ -1,11 +1,11 @@
 {
   "name": "BullShit Poker",
   "short_name": "BullShit",
-  "description": "A private, real-time bluffing cardroom.",
+  "description": "A live, real-time social bluffing game.",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#090b18",
-  "theme_color": "#090b18",
+  "background_color": "#e9edf0",
+  "theme_color": "#f7f8f4",
   "icons": [
     {
       "src": "/icon.svg",

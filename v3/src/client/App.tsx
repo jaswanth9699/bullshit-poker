@@ -1067,12 +1067,17 @@ function EntryScreen(props: {
       <section className="launch-brand" aria-labelledby="game-title">
         <span className="launch-kicker">
           <span aria-hidden="true" />
-          Live social bluffing
+          Live deception protocol
         </span>
         <h1 id="game-title">
           <span>BullShit</span> Poker
         </h1>
-        <p>The table remembers. Bluff accordingly.</p>
+        <p>Make truth expensive.</p>
+        <div className="launch-coordinate" aria-hidden="true">
+          <span>NO TELLS</span>
+          <span>ONE TABLE</span>
+          <span>ALL NERVE</span>
+        </div>
       </section>
 
       {!railOpen && (
@@ -1084,11 +1089,14 @@ function EntryScreen(props: {
             className="deal-mode-action create"
             onClick={() => openRail("create")}
           >
+            <span className="deal-mode-index" aria-hidden="true">
+              01
+            </span>
             <span className="deal-mode-icon" aria-hidden="true">
               <Plus size={22} />
             </span>
             <span>
-              <small>Start fresh</small>
+              <small>Open a new signal</small>
               <strong>Create Table</strong>
             </span>
             <ArrowRight size={20} aria-hidden="true" />
@@ -1097,11 +1105,14 @@ function EntryScreen(props: {
             className="deal-mode-action join"
             onClick={() => openRail("join")}
           >
+            <span className="deal-mode-index" aria-hidden="true">
+              02
+            </span>
             <span className="deal-mode-icon" aria-hidden="true">
               <LogIn size={21} />
             </span>
             <span>
-              <small>Enter a code</small>
+              <small>Lock onto a room</small>
               <strong>Join Room</strong>
             </span>
             <ArrowRight size={20} aria-hidden="true" />
@@ -1439,12 +1450,9 @@ function Lobby(props: {
 
       <section className="lobby-world" aria-label="Lobby table">
         <aside className="lobby-story">
-          <span className="section-kicker">Table assembling</span>
-          <h3>Every seat has a tell.</h3>
-          <p>
-            The room is live. Lock in your seat, read the table, and get ready
-            for the first bluff.
-          </p>
+          <span className="section-kicker">Seat sync</span>
+          <h3>The room is assembling.</h3>
+          <p>One signal per player. No tells yet.</p>
           <div className="lobby-ready-progress">
             <span aria-hidden="true" />
             <strong>
@@ -1456,8 +1464,8 @@ function Lobby(props: {
         <div className="lobby-orbit-zone">
           <div className="lobby-mobile-heading">
             <div>
-              <span className="section-kicker">Table assembling</span>
-              <strong>Every seat has a tell.</strong>
+              <span className="section-kicker">Seat sync</span>
+              <strong>The room is assembling.</strong>
             </div>
             <span className="lobby-capacity-copy">
               {seatedCount} / {MAX_PLAYERS} seated
@@ -1486,52 +1494,61 @@ function Lobby(props: {
             </div>
           </div>
 
-          {orderedPlayers.map((player, index) => {
-            const isViewer = player.id === props.view.viewerPlayerId;
-            const isHost = player.id === props.view.hostPlayerId;
-            const ready = player.isBot || (player.connected && player.ready);
-            const seatStatus =
-              !player.connected && !player.isBot
-                ? "Offline"
-                : ready
-                  ? "Ready"
-                  : "Waiting";
+          <div className="lobby-seat-grid">
+            {orderedPlayers.map((player, index) => {
+              const isViewer = player.id === props.view.viewerPlayerId;
+              const isHost = player.id === props.view.hostPlayerId;
+              const ready = player.isBot || (player.connected && player.ready);
+              const seatStatus =
+                !player.connected && !player.isBot
+                  ? "Offline"
+                  : ready
+                    ? "Ready"
+                    : "Waiting";
 
-            return (
-              <div
-                key={player.id}
-                className={`lobby-orbit-seat slot-${occupiedSlots[index]} ${isViewer ? "viewer" : ""} ${isHost ? "host" : ""} ${player.isBot ? "bot" : ""} ${ready ? "ready" : "waiting"}`}
-                aria-label={`${player.name}, ${seatStatus}`}
-              >
-                <div className="lobby-orbit-avatar">
-                  {player.isBot ? <Bot size={17} /> : <UsersRound size={17} />}
-                </div>
-                <div className="lobby-orbit-copy">
-                  <strong>{player.name}</strong>
-                  <span>
-                    {isViewer ? "You · " : ""}
-                    {isHost ? "Host · " : ""}
-                    {seatStatus}
+              return (
+                <div
+                  key={player.id}
+                  className={`lobby-orbit-seat slot-${occupiedSlots[index]} ${isViewer ? "viewer" : ""} ${isHost ? "host" : ""} ${player.isBot ? "bot" : ""} ${ready ? "ready" : "waiting"}`}
+                  aria-label={`${player.name}, ${seatStatus}`}
+                >
+                  <span className="lobby-seat-number" aria-hidden="true">
+                    {String(index + 1).padStart(2, "0")}
                   </span>
+                  <div className="lobby-orbit-avatar">
+                    {player.isBot ? (
+                      <Bot size={17} />
+                    ) : (
+                      <UsersRound size={17} />
+                    )}
+                  </div>
+                  <div className="lobby-orbit-copy">
+                    <strong>{player.name}</strong>
+                    <span>
+                      {isViewer ? "You · " : ""}
+                      {isHost ? "Host · " : ""}
+                      {seatStatus}
+                    </span>
+                  </div>
                 </div>
-              </div>
-            );
-          })}
+              );
+            })}
 
-          {openSeats.map((slot) => (
-            <span
-              key={slot}
-              className={`lobby-open-seat slot-${slot}`}
-              aria-hidden="true"
-            >
-              <Plus size={9} />
-            </span>
-          ))}
+            {openSeats.map((slot) => (
+              <span
+                key={slot}
+                className={`lobby-open-seat slot-${slot}`}
+                aria-hidden="true"
+              >
+                <Plus size={9} />
+              </span>
+            ))}
+          </div>
         </div>
 
         <aside className="lobby-roster" aria-label="Players at the table">
           <div className="lobby-roster-heading">
-            <span>At the table</span>
+            <span>Signal manifest</span>
             <strong>
               {seatedCount} / {MAX_PLAYERS} seated
             </strong>
@@ -1588,7 +1605,7 @@ function Lobby(props: {
         aria-label="Lobby controls"
       >
         <div className="lobby-launch-state">
-          <span>Launch state</span>
+          <span>Room pulse</span>
           <strong>{canStart ? "All players locked in" : tableHeading}</strong>
         </div>
         <button
@@ -1712,6 +1729,10 @@ function GameTable(props: {
           <span />
           <span />
         </div>
+        <div className="arena-index" aria-hidden="true">
+          <span>BLUFF / LIVE</span>
+          <span>{String(props.view.roundNumber).padStart(2, "0")}</span>
+        </div>
         <div className="claim-meta">
           <span>Round {props.view.roundNumber}</span>
           <span>{phaseLabel}</span>
@@ -1722,7 +1743,7 @@ function GameTable(props: {
               <Trophy size={30} />
             </div>
           )}
-          <span className="claim-core-label">Live Claim</span>
+          <span className="claim-core-label">Turn signal</span>
           <h2>{turnHeading}</h2>
           <div className="claim-byline">{previousClaim}</div>
         </div>
@@ -1782,6 +1803,7 @@ function GameTable(props: {
       <section className="hand-dock" aria-label="Your cards">
         <div className="hand-title">
           <span>Your cards</span>
+          <small>Private channel</small>
           <strong>{props.view.viewerCards.length}</strong>
         </div>
         <div className="card-row">

@@ -1,24 +1,23 @@
 # BullShit Poker V3 Specification
 
-Status: End-to-end V3 interface redesign deployed and verified on the isolated V3 Worker
+Status: Radical V3 interface replacement deployed and verified on the isolated V3 Worker
 Working branch: `codex/v3`  
 Development Worker: `bullshit-poker-v3`  
 Development URL: `https://bullshit-poker-v3.every-day.workers.dev/`  
-Active V3 deployment version: `17804536-bcfa-4f76-8e79-4a65ccb8a3ae`
+Active V3 deployment version: `17b730eb-e7bd-40f2-ada0-4f64e31aa760`
 Protected production URLs: `bullshit-poker.every-day.workers.dev` and `bullshit-poker-v2.every-day.workers.dev`
 
 ## 1. Product Thesis
 
-BullShit Poker V3 is a living multiplayer card table, not a conventional application with a decorative 3D background. The table should feel physical, reactive, social, and memorable while every game action remains fast, legible, accessible, and server-authoritative.
+BullShit Poker V3 is a live bluff broadcast expressed as an interactive spatial instrument. It deliberately abandons the dark panel-and-card-dashboard structure of V1/V2: every mode has its own composition, while one graphic system makes the whole product recognizable.
 
-The V3 experience is called **Living Bluff Table**.
-
-- Claims materialize as physical card-and-chip constructions at the center of the table.
-- Player presence is expressed through seats, light, motion, reactions, and table position.
-- A BullShit call creates a decisive table event: tension, impact, reveal, and consequence.
-- The environment responds to the match without obscuring cards, claims, players, or controls.
-- Mobile receives the complete experience with a composition and performance profile designed specifically for touch devices.
-- Reduced Effects is a first-class rendering mode, not a CSS-only approximation.
+- The launch screen is a full-bleed deck reactor with oversized editorial identity and a two-command entry gate.
+- The lobby is an assembly field: player signals surround an angular table platform and a precise manifest replaces overlapping circular labels.
+- The game is one continuous black arena, with a player transmission rail above it and the private hand isolated below it.
+- Claims materialize as physical constructions inside an angular Three.js network rather than behind a conventional dashboard.
+- BullShit, reveal, penalty, reactions, connection changes, and round changes create concise visual events without delaying authoritative state.
+- Mobile is a native composition, not a scaled desktop view. It retains the complete Three.js world, touch-sized controls, safe-area handling, and readable ten-player states.
+- Reduced Effects and renderer fallback are first-class playable modes.
 
 ## 2. Reference Audit
 
@@ -61,17 +60,30 @@ The reference is useful for engineering principles, not for copying its vehicle,
 - V3 never deploys to either protected production Worker until the user explicitly approves promotion.
 - V3 uses a fresh Durable Object class and namespace. It cannot read or mutate V1/V2 rooms.
 
-## 4. Original Visual Direction
+## 4. V3 Visual Direction
 
-### 4.1 World
+### 4.1 Graphic World
 
-The game occupies an abstract midnight cardroom suspended in a deep spatial field. The center table is a sculpted dark-glass playing surface with restrained cyan edge light, warm white card faces, red suit accents, and selective magenta tension lighting. It must not resemble a casino simulation, Exploding Kittens, or Bruno Simon's driving world.
+The world combines a cold-white editorial field with a near-black carbon arena. Cobalt blue carries structure and interaction, signal orange carries tension, electric yellow carries current/selected state, and true playing-card red is reserved for hearts, diamonds, and destructive emphasis. This is neither casino luxury, comic-brutalist parody, nor the cyan/purple glass styling of V1/V2.
 
-No decorative object may make a gameplay label harder to read. No blur, particle field, bloom, camera movement, or parallax may pass over the player's cards or primary actions.
+The visual grammar is angular and diagrammatic:
 
-### 4.2 Signature Object: The Claim Core
+- hard divisions instead of stacked floating cards;
+- clipped corners and diamonds instead of generic rounded pills;
+- large typography used only for the current story or action;
+- indexed controls and coordinate labels that make screens feel like a live instrument;
+- grid lines, signal rails, and physical nodes that express state rather than decorate empty space;
+- color-independent labels and icons for every semantic state.
 
-The current claim is represented by a compact physical construction at table center:
+No spatial object may make a claim, player name, card, or primary action harder to read. Private cards remain crisp semantic HTML above the rendered world.
+
+### 4.2 Signature Objects
+
+**Deck Reactor:** The launch world is built procedurally from real Three.js geometry and generated card textures. A layered BULL / SHIT deck, orbit rails, signal bars, rank satellites, and perspective grid react within restrained camera limits on desktop and mobile.
+
+**Signal Platform:** Lobby and live play use an angular, hexagonal network rather than a circular poker table. Seat beacons, edge paths, and a center claim formation are synchronized from authoritative room state.
+
+**Claim Core:** The current claim is represented by a compact physical construction at table center:
 
 - High Card: one upright card plane.
 - Pair through Four of a Kind: grouped card silhouettes with rank glyphs.
@@ -86,79 +98,83 @@ The semantic claim text remains visible beside or beneath the object at all time
 
 - **Deal:** cards move from the table core to seats along shallow arcs with staggered arrival.
 - **Claim:** selected rank/suit components snap together, compress, then settle at center.
-- **Response window:** the core breathes very slightly; no constant spinning.
+- **Response window:** the network carries restrained motion; the semantic action zone remains still.
 - **BullShit:** the table contracts for 120-180 ms, emits a radial light impulse, and separates the claimed formation.
 - **Reveal:** physical cards turn in deterministic seat order, then the proof hand is highlighted.
 - **Penalty:** one card travels to the penalized seat after the truth result is readable.
 - **Elimination:** the seat light closes and the seat recedes without making the player disappear from history.
-- **Winner:** remaining seat light connects to the table core; confetti is optional and quality-aware.
+- **Winner:** the result becomes a full-screen broadcast state; the surviving signal connects to the table core.
 - **Reconnect:** the camera does not replay historical events; the scene assembles directly into current state.
 
-Motion is short and interruptible. The latest authoritative state always wins.
+Motion is short, interruptible, and subordinate to input. The latest authoritative state always wins. Reduced Effects stops continuous rendering and transitions immediately to stable frames.
 
 ## 5. Screen Design
 
-### 5.1 Entry: Walk Up to the Table
+### 5.1 Entry: Deck Reactor
 
-- Full-bleed interactive table scene remains visible on mobile and desktop.
-- The existing Deal-In Rail remains the direct create/join input surface.
-- A shallow pointer or device-tilt response changes table perspective within safe limits.
-- Create and Join are immediate modes, not modal cards covering the world.
-- PIN fields use numeric one-time-code semantics and must not trigger password-save prompts.
-- Loading the 3D layer never blocks entry fields.
+- A full-bleed procedural deck reactor renders on mobile and desktop.
+- `BULLSHIT / POKER` is an oversized first-viewport identity, not text inside a card.
+- Create Table and Join Room are the only initial commands and sit in a flat two-channel gate.
+- Selecting a command opens the Deal-In Rail: a full-height desktop identity channel or bottom mobile input rail, leaving the world visible.
+- Fields advance one at a time with Back, Close, and direct submit controls; no modal form card covers the scene.
+- PIN inputs remain text fields with numeric input semantics and CSS masking, preventing password-manager classification while keeping digits private.
+- Loading, reduced effects, or failure of the 3D layer never blocks the entry controls.
 
-### 5.2 Lobby: Table Assembly
+### 5.2 Lobby: Signal Assembly
 
-- Seats populate around the table with collision-safe labels.
-- Ready state changes the seat's physical light and ring, not only a badge.
-- Add Bot fills the next open seat through a short deal-in sequence.
-- Host actions, share, settings, ready, start, remove, leave, and end-game controls remain available.
-- At 8-10 players, a responsive ellipse and label lanes replace radial label overlap.
-- A plain player roster remains below the table for scanning and accessible control.
+- The lobby is an unframed assembly composition, not a lobby card.
+- An angular Three.js signal platform carries synchronized human, bot, ready, offline, and open-seat beacons.
+- Player names live in a collision-proof numbered signal matrix rather than on a fragile radial orbit.
+- A separate Signal Manifest provides full names, statuses, host identity, and host-only remove controls.
+- Ready, Add Bot, and Deal the Table remain in a stable command dock; share, settings, end game, reconnect, copy, and leave remain in the room strip.
+- Two, six, and ten seats are independently verified at 320 px mobile, 390 px mobile, tablet, laptop, and mobile landscape sizes.
 
-### 5.3 Live Game
+### 5.3 Live Game: Bluff Arena
 
-- Desktop uses a broad center table, opponent seat rail/orbit, and a stable private-hand dock.
-- Mobile uses a top seat rail, full-width claim core, thumb-reachable actions, and a private-hand shelf.
+- Desktop uses one continuous full-width arena instead of a dashboard/sidebar composition.
+- Mobile uses the same world in a vertical broadcast layout, with the complete Three.js scene correctly framed rather than hidden or replaced.
+- A horizontally scrollable player transmission rail guarantees full names and states without collisions at ten players.
+- The current turn is the visual headline; previous claim, round, phase, latest claim, and actions form a strict secondary hierarchy.
 - Current turn, previous claim, round starter, card count, connection state, and phase remain visible without opening a panel.
-- Claim timeline can collapse spatially but remains vertically scrollable.
-- The player's hand never becomes part of the 3D scene; it stays sharp, private, stable, and inspectable in HTML.
+- The player's hand is a separate full-width private channel with stable card dimensions and no ambient animation.
+- Primary actions stay together across mobile portrait, landscape, and desktop; reactions open from a compact edge trigger.
 
 ### 5.4 Claim Forge
 
-- Hand category is selected from a compact segmented/radial selector depending on viewport.
+- Claim Forge is a full-screen application mode, not a bottom sheet or nested card.
+- Desktop uses a black category rail, oversized claim construction, and structured control lane.
+- Mobile uses a horizontally scrollable category rail and a compact top-packed preview/select/submit sequence.
 - Only legal higher rank/suit choices are offered.
-- A lightweight 3D preview assembles as options change.
+- A high-contrast construction preview responds immediately as legal options change.
 - Submit uses the existing authoritative command and stale-revision handling.
 - The preview is discarded immediately if server state advances.
 
 ### 5.5 Reveal and Last Round
 
-- Reveal first establishes True Claim or False Claim, claimant, caller, and penalty in a fixed reading order.
+- Reveal is a full-screen proof mode with a fixed truth headline, caller, claimant, and complete frozen hands.
 - Cards turn with actual red hearts/diamonds and dark spades/clubs.
 - The proof highlight explains which cards satisfy or fail the claim.
-- Last Round is a full-height sheet with independent scrolling and safe bottom padding.
+- Last Round owns its viewport and scroll container, with a sticky close control and safe bottom padding.
 - Every player's complete frozen hand remains visible; no clipping or horizontal-only dependency.
-- Reduced Effects reveals instantly with a short opacity transition.
+- Reduced Effects reveals immediately without motion.
 
 ### 5.6 Result and Rematch
 
-- The winner occupies the surviving physical seat rather than appearing inside a generic celebration card.
+- Results occupy the complete viewport as a decisive broadcast state rather than a generic celebration card.
 - Match summary, rematch readiness, leave, and host controls remain explicit HTML actions.
 - Rematch resets visual event history before the new match revision is consumed.
 
 ### 5.7 Complete V3 Interface Composition
 
-- The entry experience is a full-bleed playable world with an asymmetrical title lockup and a compact Create/Join command deck instead of a conventional form card.
-- Create and Join use an opaque Deal-In command rail that preserves the table world while keeping every field legible above Three.js content.
-- The shared room header is a compact command strip with a signal dot, room code, card total, copy, share, settings, host end-game, reconnect, and leave actions.
-- The lobby is an unframed assembly stage: story and accessible roster occupy one lane, while the responsive physical table and seat orbit occupy the other.
-- Crowded lobbies switch to icon-only orbit seats while the complete names and host controls remain available in the roster; 2-, 6-, and 10-player layouts are collision tested.
-- The live game uses a horizontal player ribbon, full living-table claim arena, and a content-sized private-hand tray on desktop; mobile becomes a single thumb-reachable flow.
-- Claim Forge, Last Round, settings, share, leave, end-game, and result views use one high-contrast command-surface language with sticky headers and safe-area padding.
+- V3 imports one dedicated visual system. No V1/V2 stylesheet participates in its cascade.
+- The shared room header is a flat command strip with a compact live signal, room code, card total, copy, share, settings, host end-game, reconnect, and leave actions.
+- Entry, lobby, game, Claim Forge, reveal, settings, sharing, reactions, confirmation, and results each use a purpose-built full-screen or unframed composition.
+- The lobby uses a static signal matrix plus a semantic manifest; it never places long names on collision-prone radial coordinates.
+- The live game uses a horizontal player transmission rail, one full-width spatial arena, and a full-width private-hand shelf.
+- Full-screen modes own their viewport and internal scrolling, preventing intrinsic content from expanding or clipping the page.
 - Hearts and diamonds use true card red; semantic state never depends on color alone.
 - Portrait mobile, narrow mobile, tablet, laptop, and mobile landscape have dedicated layout verification. No V3 screen depends on desktop-only Three.js framing.
-- The visual layer is imported after the inherited baseline as an isolated V3 theme, so the authoritative game and network contracts remain unchanged.
+- The authoritative game and network contracts remain unchanged beneath the replacement presentation layer.
 
 ## 6. Input Model
 
@@ -210,8 +226,7 @@ Three.js renderer + semantic React interface
 
 ### 7.2 Renderer
 
-- Prefer `WebGPURenderer` when supported and stable.
-- Fall back to WebGL automatically.
+- Use a quality-aware WebGL renderer with capped device-pixel ratio and lazy scene bundles.
 - Fall back to a static CSS/bitmap table if renderer initialization or context recovery fails.
 - WebGL/WebGPU context loss shows no blocking error and does not disconnect the room socket.
 - Continuous rendering stops when the scene is settled, the tab is hidden, or Reduced Effects is enabled.
@@ -355,13 +370,13 @@ Deferred runtime enhancements:
 - Create physical seat assembly, ready lighting, host treatment, and 2/6/10-player layouts.
 - Validate touch orbit, safe framing, responsive labels, and reduced effects.
 
-Prototype checkpoint implemented:
+Implemented checkpoint:
 
-- The existing semantic lobby orbit now contains an independent dark-glass Three.js table layer.
-- Up to ten authoritative player seats are represented by quality-aware human, bot, viewer, current-turn, disconnected, and eliminated light states.
+- The lobby is a new split assembly field with an angular Three.js platform, static indexed signal matrix, semantic manifest, and fixed command dock.
+- Up to ten authoritative seats are represented by quality-aware human, bot, viewer, current-turn, disconnected, eliminated, ready, and open-seat signals.
+- Long names are never positioned on the 3D orbit; complete labels remain collision-free in both signal matrix and manifest.
 - The scene uses distinct mobile and desktop camera framing and does not intercept touch or pointer input.
-- Existing HTML seat names, ready state, host controls, open seats, roster, leave flow, and start controls remain the accessible source of interaction.
-- Automated geometry and screenshot checks cover 2-, 6-, and 10-seat lobbies at 320px mobile, 390px mobile, tablet, and laptop widths.
+- Automated geometry and screenshot checks cover 2-, 6-, and 10-seat lobbies at 320px mobile, 390px mobile, tablet, laptop, and landscape widths.
 
 ### Phase 3: Claim Core and Live Table
 
@@ -369,9 +384,9 @@ Prototype checkpoint implemented:
 - Connect accepted claims, response windows, turns, reactions, and seat presence.
 - Preserve the semantic claim controls and private-card shelf.
 
-Prototype checkpoint implemented:
+Implemented checkpoint:
 
-- A shared live-table scene renders behind the existing semantic game controls without owning game state.
+- A shared angular network scene renders inside one continuous arena without owning game state.
 - All ten hand categories generate claim-specific one-to-five-card physical formations from the accepted authoritative claim.
 - Card textures preserve true red hearts and diamonds and dark spades and clubs.
 - Accepted claims, BullShit calls, reveals, penalties, eliminations, reactions, new rounds, and match end feed short interruptible scene energy through the deduplicated visual event bus.
@@ -386,9 +401,9 @@ Prototype checkpoint implemented:
 
 Interface checkpoint implemented:
 
-- Entry, Deal-In, room command strip, lobby, live game, hand tray, Claim Forge, reveal, Last Round, settings, share, confirmation, and winner screens now share the complete V3 visual system.
+- Entry, Deal-In, room command strip, lobby, live game, hand shelf, Claim Forge, reveal, Last Round, settings, share, reactions, confirmation, and winner screens now use the replacement V3 visual system without importing V1/V2 CSS.
 - Claim-category formations and authoritative scene reactions are live behind semantic HTML controls on mobile and desktop.
-- Sticky sheet headers, full-height reveal scrolling, content-sized desktop hands, touch-safe mobile actions, and mobile landscape composition are browser verified.
+- Viewport-owned sheets, full-height reveal scrolling, stable desktop/mobile hands, touch-safe actions, and mobile landscape composition are browser verified.
 - Final cinematic reveal choreography and penalty-card travel remain Phase 4 enhancements; the current authoritative reveal and penalty information is already complete and playable.
 
 ### Phase 5: Audio, Haptics, Polish, and Hardening
