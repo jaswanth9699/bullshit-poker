@@ -6,10 +6,14 @@ import {
   createPrivateGameView,
   createPublicGameView,
   type GameState,
-  type PlayerState
+  type PlayerState,
 } from "../../src/shared/index.ts";
 
-function player(id: string, seatIndex: number, cards: PlayerState["roundCards"]): PlayerState {
+function player(
+  id: string,
+  seatIndex: number,
+  cards: PlayerState["roundCards"],
+): PlayerState {
   return {
     id,
     name: id,
@@ -20,7 +24,7 @@ function player(id: string, seatIndex: number, cards: PlayerState["roundCards"])
     eliminated: false,
     connected: true,
     isBot: false,
-    roundCards: cards
+    roundCards: cards,
   };
 }
 
@@ -33,15 +37,15 @@ function state(): GameState {
     hostPlayerId: "A",
     players: [
       player("A", 0, [createCard("A", "S")]),
-      player("B", 1, [createCard("K", "H")])
+      player("B", 1, [createCard("K", "H")]),
     ],
     playerCredentials: [
       {
         playerId: "A",
         normalizedName: "A",
         pinVerifier: "secret-pin",
-        reconnectTokenHash: "secret-token"
-      }
+        reconnectTokenHash: "secret-token",
+      },
     ],
     roundNumber: 1,
     startingPlayerId: "A",
@@ -50,7 +54,7 @@ function state(): GameState {
     claimHistory: [],
     turnStartedAt: 100,
     turnExpiresAt: 120100,
-    turnDurationMs: 120000
+    turnDurationMs: 120000,
   };
 }
 
@@ -69,10 +73,58 @@ test("private game view exposes only the viewer current hand", () => {
   const view = createPrivateGameView(state(), "A");
   const serialized = JSON.stringify(view);
 
-  assert.deepEqual(view.viewerCards.map((card) => card.id), ["AS"]);
+  assert.deepEqual(
+    view.viewerCards.map((card) => card.id),
+    ["AS"],
+  );
   assert.equal("roundCards" in view.players[0], false);
   assert.equal(serialized.includes("AS"), true);
   assert.equal(serialized.includes("KH"), false);
   assert.equal(view.isViewerHost, true);
   assert.equal(view.canViewerAct, true);
+});
+
+test("lobby views hide intentionally departed seat tombstones", () => {
+  const lobby = state();
+  lobby.phase = "Lobby";
+  lobby.players[1] = {
+    ...lobby.players[1],
+    connected: false,
+    leftAt: 500,
+    departure: {
+      matchId: "room-1:match:1",
+      requestId: "leave-b",
+      leftAt: 500,
+      reason: "VOLUNTARY",
+    },
+  };
+
+  const publicView = createPublicGameView(lobby);
+  const privateView = createPrivateGameView(lobby, "A");
+
+  assert.deepEqual(
+    publicView.players.map((player) => player.id),
+    ["A"],
+  );
+  assert.deepEqual(
+    privateView.players.map((player) => player.id),
+    ["A"],
+  );
+});
+
+test("active game views retain departed seats for round history", () => {
+  const active = state();
+  active.players[1] = {
+    ...active.players[1],
+    connected: false,
+    leftAt: 500,
+  };
+
+  const view = createPublicGameView(active);
+
+  assert.deepEqual(
+    view.players.map((player) => player.id),
+    ["A", "B"],
+  );
+  assert.equal(view.players[1].leftAt, 500);
 });

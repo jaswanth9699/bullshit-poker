@@ -1,55 +1,33 @@
-# BullShit Poker
+# BullShit Poker — production V2
 
-A mobile-first, server-authoritative BullShit Poker game built with React, TypeScript, Cloudflare Workers, Durable Objects, and WebSockets.
+This mainline contains the V2 application running at [bullshit-poker.every-day.workers.dev](https://bullshit-poker.every-day.workers.dev/), verified on October 18, 2026. The root project is the production app; no subdirectory is needed to run it.
 
-Live deployment:
+The rebuilt HTML, both JavaScript bundles, stylesheet, three image assets, icon, manifest and service worker match the public deployment byte-for-byte. See [verification hashes](PRODUCTION_ASSET_VERIFICATION.json) and [recovery notes](PRODUCTION_SOURCE.md).
 
-https://bullshit-poker.every-day.workers.dev/
+## Versions
 
-## Features
+- [Complete development workspace](https://github.com/jaswanth9699/bullshit-poker/tree/codex/all-versions): later legacy changes, complete V2 development source, latest V3, tests, assets and specifications.
+- [Original V1 baseline](https://github.com/jaswanth9699/bullshit-poker/tree/dcd3430ac7eab9d92f250fb007a6b3ea700ccb35): preserved in Git history.
+- The later V2 haptics and reduced-effects enhancements remain on the development branch; this mainline reproduces the currently deployed frontend.
 
-- Room create/join flow with display name and 4-digit PIN reclaim.
-- Server-authoritative hidden-card state.
-- Real-time play over WebSockets.
-- Mobile-first poker table UI with opponent rail, claim timeline, and last-round reveal sheet.
-- Host-only bot add/remove in lobby.
-- Probability-based server-side bots with delayed actions.
-- Automatic next-round start after reveal.
-- Crypto-backed Fisher-Yates deck shuffling in production.
+## Development
 
-## Local Development
+Use Node.js 22.18+ (validation used Node 25.9.0).
 
-Install dependencies:
-
-```bash
-npm install
+```sh
+npm ci
+npm run check
+npm run dev
 ```
 
-Run typecheck, tests, and build:
+`npm run check` runs TypeScript, ESLint, unit/integration tests and a production build. Run browser tests against your local Worker using:
 
-```bash
-npm run typecheck
-npm test
-npm run build
+```sh
+PLAYWRIGHT_BASE_URL=http://127.0.0.1:8787 npm run test:ui
 ```
 
-Run the Cloudflare Worker locally:
+## Deployment target
 
-```bash
-npx wrangler dev --local --port 8787
-```
+`wrangler.toml` targets `bullshit-poker`, with `APP_VERSION=2.0.0`, `RoomDurableObjectV2` and the existing namespace-swap migration history. This Git update did not deploy or modify the live Worker.
 
-## Deployment
-
-This project deploys to Cloudflare Workers with static assets and Durable Objects.
-
-```bash
-npm run build
-npx wrangler deploy
-```
-
-Set `PIN_SECRET` in Cloudflare before production use:
-
-```bash
-npx wrangler secret put PIN_SECRET
-```
+The saved V2 backend passes the local tests, but its deployed bundle could not be compared because Cloudflare deployment-history access was unauthenticated. Do not interpret the frontend hash match as a verified server-bundle match.

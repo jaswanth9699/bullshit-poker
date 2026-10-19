@@ -1,25 +1,44 @@
 import { compareClaims } from "../claims/compareClaims.ts";
 import { evaluateClaim, findClaimProof } from "../claims/evaluateClaim.ts";
 import type { Claim } from "../claims/claimTypes.ts";
-import type { GameState, PlayerState, ResolutionResult, RoundResult, RoundResultReason } from "./gameTypes.ts";
+import type {
+  GameState,
+  PlayerState,
+  ResolutionResult,
+  RoundResult,
+  RoundResultReason,
+} from "./gameTypes.ts";
 import { determineNextRoundStarter } from "./seatOrder.ts";
 
 function activePlayers(players: readonly PlayerState[]): PlayerState[] {
-  return players.filter((player) => !player.eliminated && player.leftAt === undefined);
+  return players.filter(
+    (player) => !player.eliminated && player.leftAt === undefined,
+  );
 }
 
-function revealedHands(players: readonly PlayerState[]): RoundResult["revealedHands"] {
-  return activePlayers(players).map((player) => ({
+function roundPlayers(state: GameState): PlayerState[] {
+  const participantIds = new Set(
+    state.roundParticipantIds ??
+      activePlayers(state.players).map((player) => player.id),
+  );
+  return state.players.filter((player) => participantIds.has(player.id));
+}
+
+function revealedHands(state: GameState): RoundResult["revealedHands"] {
+  return roundPlayers(state).map((player) => ({
     playerId: player.id,
-    cards: [...player.roundCards]
+    cards: [...player.roundCards],
   }));
 }
 
-function activeRoundCards(players: readonly PlayerState[]) {
-  return activePlayers(players).flatMap((player) => player.roundCards);
+function activeRoundCards(state: GameState) {
+  return roundPlayers(state).flatMap((player) => player.roundCards);
 }
 
-function applyPenalty(players: readonly PlayerState[], penaltyPlayerId?: string): PlayerState[] {
+function applyPenalty(
+  players: readonly PlayerState[],
+  penaltyPlayerId?: string,
+): PlayerState[] {
   if (!penaltyPlayerId) {
     return players.map((player) => ({ ...player }));
   }
@@ -33,7 +52,7 @@ function applyPenalty(players: readonly PlayerState[], penaltyPlayerId?: string)
     return {
       ...player,
       cardCount,
-      eliminated: cardCount > 5
+      eliminated: cardCount > 5,
     };
   });
 }
@@ -47,7 +66,11 @@ function resultId(state: GameState, reason: RoundResultReason): string {
   return `${state.roomId}:round:${state.roundNumber}:${reason}`;
 }
 
-function baseResolvedState(state: GameState, players: PlayerState[], roundResult: RoundResult): GameState {
+function baseResolvedState(
+  state: GameState,
+  players: PlayerState[],
+  roundResult: RoundResult,
+): GameState {
   const winnerPlayerId = winnerId(players);
 
   return {
@@ -62,16 +85,26 @@ function baseResolvedState(state: GameState, players: PlayerState[], roundResult
     turnStartedAt: undefined,
     turnExpiresAt: undefined,
     lastRoundResult: roundResult,
-    winnerPlayerId
+    winnerPlayerId,
+    matchEndedReason: winnerPlayerId
+      ? "LAST_PLAYER_STANDING"
+      : state.matchEndedReason,
+    endedByPlayerId: winnerPlayerId ? undefined : state.endedByPlayerId,
+    endedAt: winnerPlayerId ? roundResult.createdAt : state.endedAt,
   };
 }
 
-function nextStarterAfterResolution(state: GameState, players: readonly PlayerState[]): string | undefined {
+function nextStarterAfterResolution(
+  state: GameState,
+  players: readonly PlayerState[],
+): string | undefined {
   if (!state.startingPlayerId) {
     throw new Error("Cannot resolve round without startingPlayerId");
   }
 
-  return determineNextRoundStarter(players, state.startingPlayerId) ?? undefined;
+  return (
+    determineNextRoundStarter(players, state.startingPlayerId) ?? undefined
+  );
 }
 
 function buildRoundResult(params: {
@@ -87,9 +120,15 @@ function buildRoundResult(params: {
   updatedPlayers: PlayerState[];
   now: number;
 }): RoundResult {
-  const previouslyEliminated = new Set(params.state.players.filter((player) => player.eliminated).map((player) => player.id));
+  const previouslyEliminated = new Set(
+    params.state.players
+      .filter((player) => player.eliminated)
+      .map((player) => player.id),
+  );
   const eliminatedPlayerIds = params.updatedPlayers
-    .filter((player) => player.eliminated && !previouslyEliminated.has(player.id))
+    .filter(
+      (player) => player.eliminated && !previouslyEliminated.has(player.id),
+    )
     .map((player) => player.id);
 
   return {
@@ -97,31 +136,43 @@ function buildRoundResult(params: {
     roundNumber: params.state.roundNumber,
     reason: params.reason,
     claim: params.claim,
-    finalClaimId: params.reason === "FINAL_CLAIM" ? params.claim?.id : undefined,
+    finalClaimId:
+      params.reason === "FINAL_CLAIM" ? params.claim?.id : undefined,
     callerPlayerId: params.callerPlayerId,
     claimantPlayerId: params.claimantPlayerId,
     claimWasTrue: params.claimWasTrue,
     penaltyPlayerId: params.penaltyPlayerId,
     noPenaltyReason: params.noPenaltyReason,
     proofCardIds: params.proofCardIds,
-    revealedHands: revealedHands(params.state.players),
+    revealedHands: revealedHands(params.state),
     eliminatedPlayerIds,
-    nextStartingPlayerId: nextStarterAfterResolution(params.state, params.updatedPlayers),
-    narrativeKey: narrativeKey(params.reason, params.claimWasTrue, params.noPenaltyReason),
-    createdAt: params.now
+    nextStartingPlayerId: nextStarterAfterResolution(
+      params.state,
+      params.updatedPlayers,
+    ),
+    narrativeKey: narrativeKey(
+      params.reason,
+      params.claimWasTrue,
+      params.noPenaltyReason,
+    ),
+    createdAt: params.now,
   };
 }
 
 function narrativeKey(
   reason: RoundResultReason,
   claimWasTrue?: boolean,
-  noPenaltyReason?: "TRUE_FINAL_CLAIM"
+  noPenaltyReason?: "TRUE_FINAL_CLAIM",
 ): string {
   if (reason === "BULLSHIT_CALL") {
-    return claimWasTrue ? "PLAYER_CALLED_BULLSHIT_AND_CLAIM_WAS_TRUE" : "PLAYER_CALLED_BULLSHIT_AND_CLAIM_WAS_FALSE";
+    return claimWasTrue
+      ? "PLAYER_CALLED_BULLSHIT_AND_CLAIM_WAS_TRUE"
+      : "PLAYER_CALLED_BULLSHIT_AND_CLAIM_WAS_FALSE";
   }
   if (reason === "FINAL_CLAIM") {
-    return noPenaltyReason === "TRUE_FINAL_CLAIM" ? "FINAL_CLAIM_TRUE_NO_PENALTY" : "FINAL_CLAIM_FALSE";
+    return noPenaltyReason === "TRUE_FINAL_CLAIM"
+      ? "FINAL_CLAIM_TRUE_NO_PENALTY"
+      : "FINAL_CLAIM_FALSE";
   }
   if (reason === "TIMEOUT") {
     return "PLAYER_TIMED_OUT";
@@ -129,23 +180,33 @@ function narrativeKey(
   return "NO_LEGAL_CLAIM";
 }
 
-export function resolveBullshitCall(state: GameState, callerPlayerId: string, now: number): ResolutionResult {
+export function resolveBullshitCall(
+  state: GameState,
+  callerPlayerId: string,
+  now: number,
+): ResolutionResult {
   if (!state.currentClaim) {
     throw new Error("Cannot call BullShit without a current claim");
   }
   if (!state.activeClaimWindow || state.activeClaimWindow.status !== "OPEN") {
-    throw new Error("Cannot call BullShit without an open claim response window");
+    throw new Error(
+      "Cannot call BullShit without an open claim response window",
+    );
   }
   if (state.currentClaim.playerId === callerPlayerId) {
     throw new Error("Claimant cannot call BullShit on their own claim");
   }
-  if (!activePlayers(state.players).some((player) => player.id === callerPlayerId)) {
+  if (
+    !activePlayers(state.players).some((player) => player.id === callerPlayerId)
+  ) {
     throw new Error("Only an active player can call BullShit");
   }
 
-  const cards = activeRoundCards(state.players);
+  const cards = activeRoundCards(state);
   const claimWasTrue = evaluateClaim(state.currentClaim, cards);
-  const penaltyPlayerId = claimWasTrue ? callerPlayerId : state.currentClaim.playerId;
+  const penaltyPlayerId = claimWasTrue
+    ? callerPlayerId
+    : state.currentClaim.playerId;
   const updatedPlayers = applyPenalty(state.players, penaltyPlayerId);
   const proof = claimWasTrue ? findClaimProof(state.currentClaim, cards) : null;
 
@@ -159,30 +220,43 @@ export function resolveBullshitCall(state: GameState, callerPlayerId: string, no
     penaltyPlayerId,
     proofCardIds: proof?.map((card) => card.id),
     updatedPlayers,
-    now
+    now,
   });
 
   return {
     state: baseResolvedState(state, updatedPlayers, roundResult),
-    roundResult
+    roundResult,
   };
 }
 
-export function resolveFinalClaim(state: GameState, finalClaim: Claim, now: number): ResolutionResult {
+export function resolveFinalClaim(
+  state: GameState,
+  finalClaim: Claim,
+  now: number,
+): ResolutionResult {
   if (!state.currentClaim) {
     throw new Error("Cannot make final claim without a current claim");
   }
-  if (!state.startingPlayerId || state.currentTurnPlayerId !== state.startingPlayerId) {
-    throw new Error("Only the round starting player can make a final claim");
+  const finalDecisionPlayerId =
+    state.finalDecisionPlayerId ?? state.startingPlayerId;
+  if (
+    !finalDecisionPlayerId ||
+    state.currentTurnPlayerId !== finalDecisionPlayerId
+  ) {
+    throw new Error(
+      "Only the round final-decision player can make a final claim",
+    );
   }
-  if (finalClaim.playerId !== state.startingPlayerId) {
-    throw new Error("Final claim must be submitted by the round starting player");
+  if (finalClaim.playerId !== finalDecisionPlayerId) {
+    throw new Error(
+      "Final claim must be submitted by the final-decision player",
+    );
   }
   if (compareClaims(finalClaim, state.currentClaim) !== 1) {
     throw new Error("Final claim must be strictly higher than current claim");
   }
 
-  const cards = activeRoundCards(state.players);
+  const cards = activeRoundCards(state);
   const claimWasTrue = evaluateClaim(finalClaim, cards);
   const penaltyPlayerId = claimWasTrue ? undefined : finalClaim.playerId;
   const updatedPlayers = applyPenalty(state.players, penaltyPlayerId);
@@ -198,11 +272,11 @@ export function resolveFinalClaim(state: GameState, finalClaim: Claim, now: numb
     noPenaltyReason: claimWasTrue ? "TRUE_FINAL_CLAIM" : undefined,
     proofCardIds: proof?.map((card) => card.id),
     updatedPlayers,
-    now
+    now,
   });
 
   return {
     state: baseResolvedState(state, updatedPlayers, roundResult),
-    roundResult
+    roundResult,
   };
 }

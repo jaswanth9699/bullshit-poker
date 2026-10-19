@@ -207,6 +207,8 @@ test("last active player wins immediately when a penalty eliminates everyone els
 
   assert.equal(result.state.phase, "GameOver");
   assert.equal(result.state.winnerPlayerId, "A");
+  assert.equal(result.state.matchEndedReason, "LAST_PLAYER_STANDING");
+  assert.equal(result.state.endedAt, 500);
   assert.equal(result.roundResult.penaltyPlayerId, "B");
   assert.deepEqual(result.roundResult.eliminatedPlayerIds, ["B"]);
   assert.equal(result.roundResult.nextStartingPlayerId, undefined);

@@ -3,7 +3,10 @@ import type { Rng } from "../cards/cardTypes.ts";
 export const ROOM_CODE_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
 export const DEFAULT_ROOM_CODE_LENGTH = 6;
 
-export function generateRoomCode(rng: Rng, length = DEFAULT_ROOM_CODE_LENGTH): string {
+export function generateRoomCode(
+  rng: Rng,
+  length = DEFAULT_ROOM_CODE_LENGTH,
+): string {
   let code = "";
 
   for (let index = 0; index < length; index += 1) {

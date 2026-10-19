@@ -25,7 +25,10 @@ export function shuffleDeck(deck: readonly Card[], rng: Rng): Card[] {
 
   for (let index = shuffled.length - 1; index > 0; index -= 1) {
     const swapIndex = randomIndexBelow(index + 1, rng);
-    [shuffled[index], shuffled[swapIndex]] = [shuffled[swapIndex], shuffled[index]];
+    [shuffled[index], shuffled[swapIndex]] = [
+      shuffled[swapIndex],
+      shuffled[index],
+    ];
   }
 
   return shuffled;

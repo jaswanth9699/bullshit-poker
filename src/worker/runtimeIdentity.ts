@@ -1,19 +1,27 @@
+import { hmac } from "@noble/hashes/hmac.js";
+import { sha256 } from "@noble/hashes/sha2.js";
+import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js";
 import type { Rng, RoomIdentityProvider } from "../shared/index.ts";
 
-function fnv1a(input: string): string {
-  let hash = 0x811c9dc5;
-
-  for (let index = 0; index < input.length; index += 1) {
-    hash ^= input.charCodeAt(index);
-    hash = Math.imul(hash, 0x01000193);
-  }
-
-  return (hash >>> 0).toString(16).padStart(8, "0");
+function keyedDigest(secret: string, purpose: string, value: string): string {
+  return bytesToHex(
+    hmac(sha256, utf8ToBytes(secret), utf8ToBytes(`${purpose}:${value}`)),
+  );
 }
 
-function randomId(prefix: string, rng: Rng): string {
-  const value = Math.floor(rng() * Number.MAX_SAFE_INTEGER).toString(36);
-  return `${prefix}_${value}`;
+function randomToken(prefix: string, byteLength: number): string {
+  const values = new Uint8Array(byteLength);
+  crypto.getRandomValues(values);
+  return `${prefix}_${bytesToHex(values)}`;
+}
+
+function constantTimeEqual(left: string, right: string): boolean {
+  if (left.length !== right.length) return false;
+  let difference = 0;
+  for (let index = 0; index < left.length; index += 1) {
+    difference |= left.charCodeAt(index) ^ right.charCodeAt(index);
+  }
+  return difference === 0;
 }
 
 const UINT32_RANGE = 2 ** 32;
@@ -25,8 +33,14 @@ function cryptoRandomUint32(): number {
 }
 
 function cryptoRandomInt(maxExclusive: number): number {
-  if (!Number.isSafeInteger(maxExclusive) || maxExclusive <= 0 || maxExclusive > UINT32_RANGE) {
-    throw new Error("Crypto random integer bound must be in the range [1, 2^32]");
+  if (
+    !Number.isSafeInteger(maxExclusive) ||
+    maxExclusive <= 0 ||
+    maxExclusive > UINT32_RANGE
+  ) {
+    throw new Error(
+      "Crypto random integer bound must be in the range [1, 2^32]",
+    );
   }
 
   const rejectionLimit = UINT32_RANGE - (UINT32_RANGE % maxExclusive);
@@ -43,22 +57,27 @@ export function createCryptoRng(): Rng {
   return rng;
 }
 
-export function createRuntimeIdentityProvider(secret: string, rng: Rng): RoomIdentityProvider {
+export function createRuntimeIdentityProvider(
+  secret: string,
+): RoomIdentityProvider {
   return {
     createPlayerId() {
-      return randomId("player", rng);
+      return randomToken("player", 16);
     },
     createReconnectToken() {
-      return randomId("token", rng);
+      return randomToken("token", 32);
     },
     createPinVerifier(pin, playerId) {
-      return `pin-v1:${fnv1a(`${secret}:${playerId}:${pin}`)}`;
+      return `pin-v2:${keyedDigest(secret, "pin", `${playerId}:${pin}`)}`;
     },
     verifyPin(pin, verifier, playerId) {
-      return verifier === `pin-v1:${fnv1a(`${secret}:${playerId}:${pin}`)}`;
+      return constantTimeEqual(
+        verifier,
+        `pin-v2:${keyedDigest(secret, "pin", `${playerId}:${pin}`)}`,
+      );
     },
     hashReconnectToken(token, playerId) {
-      return `token-v1:${fnv1a(`${secret}:${playerId}:${token}`)}`;
-    }
+      return `token-v2:${keyedDigest(secret, "reconnect", `${playerId}:${token}`)}`;
+    },
   };
 }

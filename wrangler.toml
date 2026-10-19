@@ -1,6 +1,6 @@
 name = "bullshit-poker"
 main = "src/worker/worker.ts"
-compatibility_date = "2026-04-25"
+compatibility_date = "2026-08-18"
 workers_dev = true
 preview_urls = false
 
@@ -10,8 +10,19 @@ binding = "ASSETS"
 
 [[durable_objects.bindings]]
 name = "ROOM_DURABLE_OBJECT"
-class_name = "RoomDurableObject"
+class_name = "RoomDurableObjectV2"
 
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["RoomDurableObject"]
+
+[[migrations]]
+tag = "v2-swap-2026-08-21"
+new_sqlite_classes = ["RoomDurableObjectV2"]
+
+[[migrations]]
+tag = "v2-swap-cleanup-2026-08-21"
+deleted_classes = ["RoomDurableObject"]
+
+[vars]
+APP_VERSION = "2.0.0"

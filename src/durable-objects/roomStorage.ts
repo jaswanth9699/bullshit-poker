@@ -4,6 +4,7 @@ import type { RoomStateStore } from "./roomAuthority.ts";
 export interface DurableObjectStorageLike {
   get<T>(key: string): Promise<T | undefined>;
   put<T>(key: string, value: T): Promise<void>;
+  delete?(key: string): Promise<boolean>;
 }
 
 export const ROOM_STATE_STORAGE_KEY = "roomState";
@@ -23,5 +24,9 @@ export class DurableObjectRoomStateStore implements RoomStateStore {
 
   async putState(state: GameState): Promise<void> {
     await this.storage.put(this.key, state);
+  }
+
+  async deleteState(): Promise<void> {
+    await this.storage.delete?.(this.key);
   }
 }

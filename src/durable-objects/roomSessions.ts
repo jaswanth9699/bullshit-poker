@@ -1,4 +1,5 @@
 import {
+  REACTION_KINDS,
   createPrivateGameView,
   decideBotAction,
   type BotDecision,
@@ -13,6 +14,7 @@ import {
   type RoundResult,
   type RoomServerMessage,
   type RoomUpdatedReason,
+  type ReactionKind,
   type ServerActionResult,
   type ServerErrorCode,
   type SubmitClaimPayload,
@@ -34,6 +36,7 @@ export type RoomSocketLike = {
 
 export type RoomSessionAuthority = {
   getState(): Promise<GameState | undefined>;
+  deleteRoom?(): Promise<void>;
   connectPlayer(
     playerId: string,
     reconnectToken: string,
@@ -41,6 +44,34 @@ export type RoomSessionAuthority = {
     now: number,
   ): Promise<LifecycleResult>;
   disconnectPlayer(playerId: string, now: number): Promise<LifecycleResult>;
+  leaveGame(input: {
+    playerId: string;
+    requestId: string;
+    matchId: string;
+    now: number;
+  }): Promise<LifecycleResult>;
+  setReady(input: {
+    playerId: string;
+    ready: boolean;
+  }): Promise<LifecycleResult>;
+  endGame(input: {
+    playerId: string;
+    requestId: string;
+    matchId: string;
+    now: number;
+  }): Promise<LifecycleResult>;
+  startRematch(input: {
+    playerId: string;
+    requestId: string;
+    matchId: string;
+    now: number;
+  }): Promise<LifecycleResult>;
+  sendReaction(input: {
+    playerId: string;
+    requestId: string;
+    kind: ReactionKind;
+    now: number;
+  }): Promise<LifecycleResult>;
   advanceToNextRound(now: number, rng: Rng): Promise<LifecycleResult>;
   addBot(input: {
     hostPlayerId: string;
@@ -57,6 +88,7 @@ export type RoomSessionAuthority = {
     hostPlayerId: string,
     now: number,
     rng: Rng,
+    enforceReady?: boolean,
   ): Promise<LifecycleResult>;
   submitClaim(
     envelope: ClientActionEnvelope<SubmitClaimPayload>,
@@ -108,6 +140,40 @@ function rawMessageData(raw: unknown): unknown {
   return raw;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && !Array.isArray(value) && typeof value === "object");
+}
+
+function isString(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0;
+}
+
+function hasRequestId(value: Record<string, unknown>): boolean {
+  return isString(value.requestId);
+}
+
+function isActionEnvelope(
+  value: unknown,
+  action: "SUBMIT_CLAIM" | "CALL_BULLSHIT",
+): value is ClientActionEnvelope<SubmitClaimPayload | CallBullshitPayload> {
+  if (!isRecord(value) || !isRecord(value.payload)) return false;
+  if (
+    !isString(value.requestId) ||
+    !isString(value.roomId) ||
+    !isString(value.playerId) ||
+    typeof value.stateRevision !== "number" ||
+    !Number.isSafeInteger(value.stateRevision) ||
+    value.stateRevision < 0
+  ) {
+    return false;
+  }
+  if (value.turnId !== undefined && !isString(value.turnId)) return false;
+  if (value.claimWindowId !== undefined && !isString(value.claimWindowId)) {
+    return false;
+  }
+  return action === "CALL_BULLSHIT" || isRecord(value.payload.claim);
+}
+
 function parseClientMessage(raw: unknown): RoomClientMessage | null {
   const data = rawMessageData(raw);
   if (typeof data !== "string") {
@@ -119,10 +185,50 @@ function parseClientMessage(raw: unknown): RoomClientMessage | null {
     if (!value || Array.isArray(value) || typeof value !== "object") {
       return null;
     }
-    if (typeof (value as { type?: unknown }).type !== "string") {
-      return null;
+    const record = value as Record<string, unknown>;
+    switch (record.type) {
+      case "PING":
+      case "REQUEST_SYNC":
+      case "START_GAME":
+      case "START_NEXT_ROUND":
+        return hasRequestId(record) ? (record as RoomClientMessage) : null;
+      case "ADD_BOT":
+        return hasRequestId(record) &&
+          (record.name === undefined || typeof record.name === "string")
+          ? (record as RoomClientMessage)
+          : null;
+      case "REMOVE_BOT":
+        return hasRequestId(record) && isString(record.botPlayerId)
+          ? (record as RoomClientMessage)
+          : null;
+      case "REMOVE_PLAYER":
+        return hasRequestId(record) && isString(record.targetPlayerId)
+          ? (record as RoomClientMessage)
+          : null;
+      case "LEAVE_GAME":
+      case "END_GAME":
+      case "START_REMATCH":
+        return hasRequestId(record) && isString(record.matchId)
+          ? (record as RoomClientMessage)
+          : null;
+      case "SET_READY":
+        return hasRequestId(record) && typeof record.ready === "boolean"
+          ? (record as RoomClientMessage)
+          : null;
+      case "SEND_REACTION":
+        return hasRequestId(record) &&
+          typeof record.kind === "string" &&
+          REACTION_KINDS.includes(record.kind as ReactionKind)
+          ? (record as RoomClientMessage)
+          : null;
+      case "SUBMIT_CLAIM":
+      case "CALL_BULLSHIT":
+        return isActionEnvelope(record.envelope, record.type)
+          ? (record as RoomClientMessage)
+          : null;
+      default:
+        return null;
     }
-    return value as RoomClientMessage;
   } catch {
     return null;
   }
@@ -154,6 +260,8 @@ export class RoomSessionManager {
   private autoNextRoundRevision?: number;
   private botActionTimer?: ReturnType<typeof setTimeout>;
   private botActionKey?: string;
+  private readonly lastReactionAtByPlayer = new Map<string, number>();
+  private operationTail: Promise<void> = Promise.resolve();
 
   constructor(
     authority: RoomSessionAuthority,
@@ -186,6 +294,16 @@ export class RoomSessionManager {
   }
 
   async connectSocket(params: {
+    socket: RoomSocketLike;
+    playerId: string;
+    reconnectToken: string;
+    identity: RoomIdentityProvider;
+    now?: number;
+  }): Promise<SessionConnectResult> {
+    return this.runExclusive(() => this.connectSocketInternal(params));
+  }
+
+  private async connectSocketInternal(params: {
     socket: RoomSocketLike;
     playerId: string;
     reconnectToken: string;
@@ -249,9 +367,23 @@ export class RoomSessionManager {
     raw: unknown,
     now: number = this.now(),
   ): Promise<void> {
-    const session = this.sessions.get(sessionId);
-    if (!session) return;
+    return this.runExclusive(async () => {
+      const session = this.sessions.get(sessionId);
+      if (!session) return;
+      try {
+        await this.handleSocketMessageInternal(session, raw, now);
+      } catch {
+        if (!this.sessions.has(session.id)) return;
+        await this.rejectWithCurrentView(session, undefined, "INTERNAL_ERROR");
+      }
+    });
+  }
 
+  private async handleSocketMessageInternal(
+    session: SessionRecord,
+    raw: unknown,
+    now: number,
+  ): Promise<void> {
     const message = parseClientMessage(raw);
     if (!message) {
       await this.reject(session, {
@@ -304,14 +436,11 @@ export class RoomSessionManager {
         return;
 
       case "REMOVE_PLAYER":
-        await this.handleLifecycleResult(
+        await this.handleRemovePlayer(
           session,
           message.requestId,
-          await this.authority.removePlayer({
-            hostPlayerId: session.playerId,
-            targetPlayerId: message.targetPlayerId,
-            now,
-          }),
+          message.targetPlayerId,
+          now,
         );
         return;
 
@@ -319,7 +448,7 @@ export class RoomSessionManager {
         await this.handleLifecycleResult(
           session,
           message.requestId,
-          await this.authority.startGame(session.playerId, now, this.rng),
+          await this.authority.startGame(session.playerId, now, this.rng, true),
         );
         return;
 
@@ -328,6 +457,61 @@ export class RoomSessionManager {
           session,
           message.requestId,
           await this.authority.advanceToNextRound(now, this.rng),
+        );
+        return;
+
+      case "LEAVE_GAME":
+        await this.handleLeaveGame(
+          session,
+          message.requestId,
+          message.matchId,
+          now,
+        );
+        return;
+
+      case "SET_READY":
+        await this.handleLifecycleResult(
+          session,
+          message.requestId,
+          await this.authority.setReady({
+            playerId: session.playerId,
+            ready: message.ready,
+          }),
+        );
+        return;
+
+      case "END_GAME":
+        await this.handleLifecycleResult(
+          session,
+          message.requestId,
+          await this.authority.endGame({
+            playerId: session.playerId,
+            requestId: message.requestId,
+            matchId: message.matchId,
+            now,
+          }),
+        );
+        return;
+
+      case "START_REMATCH":
+        await this.handleLifecycleResult(
+          session,
+          message.requestId,
+          await this.authority.startRematch({
+            playerId: session.playerId,
+            requestId: message.requestId,
+            matchId: message.matchId,
+            now,
+          }),
+        );
+        return;
+
+      case "SEND_REACTION":
+        await this.handleReaction(
+          session,
+          message.requestId,
+          message.kind,
+          now,
         );
         return;
 
@@ -352,6 +536,15 @@ export class RoomSessionManager {
     sessionId: string,
     now: number = this.now(),
   ): Promise<void> {
+    return this.runExclusive(() =>
+      this.disconnectSessionInternal(sessionId, now),
+    );
+  }
+
+  private async disconnectSessionInternal(
+    sessionId: string,
+    now: number,
+  ): Promise<void> {
     const session = this.sessions.get(sessionId);
     if (!session) return;
 
@@ -366,6 +559,109 @@ export class RoomSessionManager {
       this.scheduleAutoNextRound(result.state);
       await this.processBots();
     }
+  }
+
+  private async handleLeaveGame(
+    session: SessionRecord,
+    requestId: string,
+    matchId: string,
+    now: number,
+  ): Promise<void> {
+    const result = await this.authority.leaveGame({
+      playerId: session.playerId,
+      requestId,
+      matchId,
+      now,
+    });
+    if (!result.ok) {
+      await this.rejectWithCurrentView(
+        session,
+        requestId,
+        result.code,
+        result.latestStateRevision,
+      );
+      return;
+    }
+
+    this.send(session, {
+      type: "LEAVE_ACCEPTED",
+      requestId,
+      matchId,
+      roomAbandoned: result.state.phase === "Abandoned",
+    });
+    this.sessions.delete(session.id);
+    await this.broadcastState("PLAYER_LEFT", result.state);
+    session.socket.close?.(1000, "PLAYER_LEFT");
+    if (result.state.phase === "Abandoned") {
+      await this.authority.deleteRoom?.();
+    }
+    this.scheduleAutoNextRound(result.state);
+    await this.processBots();
+  }
+
+  private async handleRemovePlayer(
+    session: SessionRecord,
+    requestId: string,
+    targetPlayerId: string,
+    now: number,
+  ): Promise<void> {
+    const result = await this.authority.removePlayer({
+      hostPlayerId: session.playerId,
+      targetPlayerId,
+      now,
+    });
+    if (!result.ok) {
+      await this.rejectWithCurrentView(
+        session,
+        requestId,
+        result.code,
+        result.latestStateRevision,
+      );
+      return;
+    }
+
+    for (const targetSession of [...this.sessions.values()]) {
+      if (targetSession.playerId !== targetPlayerId) continue;
+      this.sendSocket(targetSession.socket, {
+        type: "SEAT_REMOVED",
+        reason: "HOST_REMOVED",
+      });
+      this.sessions.delete(targetSession.id);
+      targetSession.socket.close?.(1000, "SEAT_REMOVED");
+    }
+
+    await this.broadcastState("ACTION_ACCEPTED", result.state, {
+      requestId,
+      acceptedByPlayerId: session.playerId,
+    });
+  }
+
+  private async handleReaction(
+    session: SessionRecord,
+    requestId: string,
+    kind: ReactionKind,
+    now: number,
+  ): Promise<void> {
+    const lastReactionAt = this.lastReactionAtByPlayer.get(session.playerId);
+    if (lastReactionAt !== undefined && now - lastReactionAt < 750) {
+      await this.rejectWithCurrentView(
+        session,
+        requestId,
+        "REACTION_RATE_LIMITED",
+      );
+      return;
+    }
+
+    const result = await this.authority.sendReaction({
+      playerId: session.playerId,
+      requestId,
+      kind,
+      now,
+    });
+    if (result.ok) {
+      this.lastReactionAtByPlayer.set(session.playerId, now);
+    }
+    await this.handleLifecycleResult(session, requestId, result);
   }
 
   private async handleSubmitClaim(
@@ -618,7 +914,9 @@ export class RoomSessionManager {
     }
 
     this.botActionTimer = setTimeout(() => {
-      void this.runScheduledBotAction(state.stateRevision, actionKey);
+      void this.runExclusive(() =>
+        this.runScheduledBotAction(state.stateRevision, actionKey),
+      );
     }, delayMs);
 
     const timer = this.botActionTimer as ReturnType<typeof setTimeout> & {
@@ -691,7 +989,7 @@ export class RoomSessionManager {
     if (this.processingBots) return;
 
     this.processingBots = true;
-    let shouldContinue = false;
+    let shouldContinue: boolean;
 
     try {
       const state = await this.authority.getState();
@@ -799,7 +1097,9 @@ export class RoomSessionManager {
     this.clearAutoNextRound();
     this.autoNextRoundRevision = state.stateRevision;
     this.autoNextRoundTimer = setTimeout(() => {
-      void this.advanceAutomaticallyFromRoundReview(state.stateRevision);
+      void this.runExclusive(() =>
+        this.advanceAutomaticallyFromRoundReview(state.stateRevision),
+      );
     }, this.autoNextRoundDelayMs);
 
     const timer = this.autoNextRoundTimer as ReturnType<typeof setTimeout> & {
@@ -838,11 +1138,35 @@ export class RoomSessionManager {
     await this.processBots();
   }
 
-  private send(session: SessionRecord, message: RoomServerMessage): void {
-    this.sendSocket(session.socket, message);
+  private send(session: SessionRecord, message: RoomServerMessage): boolean {
+    const sent = this.sendSocket(session.socket, message);
+    if (!sent && this.sessions.has(session.id)) {
+      session.socket.close?.(1011, "SEND_FAILED");
+      void this.disconnectSession(session.id);
+    }
+    return sent;
   }
 
-  private sendSocket(socket: RoomSocketLike, message: RoomServerMessage): void {
-    socket.send(JSON.stringify(message));
+  private sendSocket(
+    socket: RoomSocketLike,
+    message: RoomServerMessage,
+  ): boolean {
+    try {
+      socket.send(JSON.stringify(message));
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private runExclusive<TResult>(
+    operation: () => Promise<TResult>,
+  ): Promise<TResult> {
+    const result = this.operationTail.then(operation, operation);
+    this.operationTail = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
   }
 }

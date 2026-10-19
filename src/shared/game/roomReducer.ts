@@ -37,12 +37,6 @@ function success(
   };
 }
 
-function isActivePlayer(
-  player: PlayerState | undefined,
-): player is PlayerState {
-  return Boolean(player && !player.eliminated && player.leftAt === undefined);
-}
-
 function findPlayer(
   state: GameState,
   playerId: string,
@@ -56,6 +50,7 @@ function ensureBaseActionIsValid<TPayload>(
 ): ServerErrorCode | null {
   if (
     state.phase === "GameOver" ||
+    state.phase === "Abandoned" ||
     state.phase === "Closed" ||
     state.phase === "ResolvingRound"
   ) {
@@ -180,7 +175,9 @@ export function applySubmitClaim(
   }
 
   const isFinalClaim = Boolean(
-    state.currentClaim && state.startingPlayerId === envelope.playerId,
+    state.currentClaim &&
+    (state.finalDecisionPlayerId ?? state.startingPlayerId) ===
+      envelope.playerId,
   );
   if (isFinalClaim) {
     try {

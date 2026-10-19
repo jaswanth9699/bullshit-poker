@@ -144,10 +144,12 @@ export function connectRoomSocket(
     `${protocol}//${window.location.host}/api/rooms/${encodeURIComponent(credential.code)}/live`,
   );
   url.searchParams.set("playerId", credential.playerId);
-  url.searchParams.set("reconnectToken", credential.reconnectToken);
 
   onStatus("connecting");
-  const socket = new WebSocket(url);
+  const socket = new WebSocket(url, [
+    "bullshit-poker-v2",
+    `reconnect.${credential.reconnectToken}`,
+  ]);
   socket.addEventListener("open", () => onStatus("open"));
   socket.addEventListener("close", () => onStatus("closed"));
   socket.addEventListener("error", () => onStatus("error"));

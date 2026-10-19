@@ -1,4 +1,10 @@
-import { rankFromValue, rankValue, type Card, type Rank, type Suit } from "../cards/cardTypes.ts";
+import {
+  rankFromValue,
+  rankValue,
+  type Card,
+  type Rank,
+  type Suit,
+} from "../cards/cardTypes.ts";
 import { normalizeClaimShape, validateClaimShape } from "./compareClaims.ts";
 import type { Claim } from "./claimTypes.ts";
 
@@ -16,15 +22,29 @@ function straightRanksEndingAt(highRank: Rank): Rank[] {
   }
 
   const highValue = rankValue(highRank);
-  return [highValue - 4, highValue - 3, highValue - 2, highValue - 1, highValue].map(rankFromValue);
+  return [
+    highValue - 4,
+    highValue - 3,
+    highValue - 2,
+    highValue - 1,
+    highValue,
+  ].map(rankFromValue);
 }
 
-function takeCards(cards: readonly Card[], rank: Rank, count: number): Card[] | null {
+function takeCards(
+  cards: readonly Card[],
+  rank: Rank,
+  count: number,
+): Card[] | null {
   const matches = cardsByRank(cards, rank);
   return matches.length >= count ? matches.slice(0, count) : null;
 }
 
-function findStraightProof(cards: readonly Card[], highRank: Rank, suit?: Suit): Card[] | null {
+function findStraightProof(
+  cards: readonly Card[],
+  highRank: Rank,
+  suit?: Suit,
+): Card[] | null {
   const source = suit ? cardsBySuit(cards, suit) : [...cards];
   const proof: Card[] = [];
 
@@ -37,7 +57,10 @@ function findStraightProof(cards: readonly Card[], highRank: Rank, suit?: Suit):
   return proof;
 }
 
-export function findClaimProof(claim: Claim, cards: readonly Card[]): Card[] | null {
+export function findClaimProof(
+  claim: Claim,
+  cards: readonly Card[],
+): Card[] | null {
   const normalized = normalizeClaimShape(claim);
   validateClaimShape(normalized);
 
@@ -62,14 +85,20 @@ export function findClaimProof(claim: Claim, cards: readonly Card[]): Card[] | n
 
     case "FLUSH": {
       const suited = cardsBySuit(cards, normalized.suit!);
-      const highCard = suited.find((card) => card.rank === normalized.primaryRank);
+      const highCard = suited.find(
+        (card) => card.rank === normalized.primaryRank,
+      );
       if (!highCard) return null;
 
       const lowerCards = suited
-        .filter((card) => rankValue(card.rank) < rankValue(normalized.primaryRank!))
+        .filter(
+          (card) => rankValue(card.rank) < rankValue(normalized.primaryRank!),
+        )
         .sort((left, right) => rankValue(right.rank) - rankValue(left.rank));
 
-      return lowerCards.length >= 4 ? [highCard, ...lowerCards.slice(0, 4)] : null;
+      return lowerCards.length >= 4
+        ? [highCard, ...lowerCards.slice(0, 4)]
+        : null;
     }
 
     case "FULL_HOUSE": {

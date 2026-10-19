@@ -12,10 +12,15 @@ import {
   type Claim,
   type HandType,
   type Rank,
-  type Suit
+  type Suit,
 } from "../../src/shared/index.ts";
 
-function claim(handType: HandType, primaryRank?: Rank, secondaryRank?: Rank, suit?: Suit): Claim {
+function claim(
+  handType: HandType,
+  primaryRank?: Rank,
+  secondaryRank?: Rank,
+  suit?: Suit,
+): Claim {
   return { handType, primaryRank, secondaryRank, suit };
 }
 
@@ -33,9 +38,18 @@ function hasClaim(claims: readonly Claim[], expected: Claim): boolean {
 }
 
 test("Two Pair compares both pair ranks, not only the high pair", () => {
-  assert.equal(compareClaims(claim("TWO_PAIR", "K", "J"), claim("TWO_PAIR", "K", "10")), 1);
-  assert.equal(compareClaims(claim("TWO_PAIR", "K", "Q"), claim("TWO_PAIR", "K", "J")), 1);
-  assert.equal(compareClaims(claim("TWO_PAIR", "A", "K"), claim("TWO_PAIR", "K", "Q")), 1);
+  assert.equal(
+    compareClaims(claim("TWO_PAIR", "K", "J"), claim("TWO_PAIR", "K", "10")),
+    1,
+  );
+  assert.equal(
+    compareClaims(claim("TWO_PAIR", "K", "Q"), claim("TWO_PAIR", "K", "J")),
+    1,
+  );
+  assert.equal(
+    compareClaims(claim("TWO_PAIR", "A", "K"), claim("TWO_PAIR", "K", "Q")),
+    1,
+  );
 });
 
 test("Two Pair legal-claim generation includes same-high-pair raises", () => {
@@ -47,13 +61,28 @@ test("Two Pair legal-claim generation includes same-high-pair raises", () => {
 });
 
 test("Two Pair normalizes reversed pair rank input", () => {
-  assert.deepEqual(normalizeClaimShape(claim("TWO_PAIR", "K", "A")), claim("TWO_PAIR", "A", "K"));
+  assert.deepEqual(
+    normalizeClaimShape(claim("TWO_PAIR", "K", "A")),
+    claim("TWO_PAIR", "A", "K"),
+  );
 });
 
 test("Full House compares pair rank when trips are tied", () => {
-  assert.equal(compareClaims(claim("FULL_HOUSE", "K", "J"), claim("FULL_HOUSE", "K", "10")), 1);
-  assert.equal(compareClaims(claim("FULL_HOUSE", "K", "Q"), claim("FULL_HOUSE", "K", "J")), 1);
-  assert.equal(compareClaims(claim("FULL_HOUSE", "K", "A"), claim("FULL_HOUSE", "K", "Q")), 1);
+  assert.equal(
+    compareClaims(
+      claim("FULL_HOUSE", "K", "J"),
+      claim("FULL_HOUSE", "K", "10"),
+    ),
+    1,
+  );
+  assert.equal(
+    compareClaims(claim("FULL_HOUSE", "K", "Q"), claim("FULL_HOUSE", "K", "J")),
+    1,
+  );
+  assert.equal(
+    compareClaims(claim("FULL_HOUSE", "K", "A"), claim("FULL_HOUSE", "K", "Q")),
+    1,
+  );
 });
 
 test("Full House legal-claim generation includes same-trips higher-pair raises", () => {
@@ -65,25 +94,63 @@ test("Full House legal-claim generation includes same-trips higher-pair raises",
 });
 
 test("regular Flush uses locked reversed high-card ordering", () => {
-  assert.equal(compareClaims(claim("FLUSH", "K", undefined, "S"), claim("FLUSH", "A", undefined, "S")), 1);
-  assert.equal(compareClaims(claim("FLUSH", "Q", undefined, "S"), claim("FLUSH", "K", undefined, "S")), 1);
-  assert.equal(compareClaims(claim("FLUSH", "6", undefined, "S"), claim("FLUSH", "7", undefined, "S")), 1);
+  assert.equal(
+    compareClaims(
+      claim("FLUSH", "K", undefined, "S"),
+      claim("FLUSH", "A", undefined, "S"),
+    ),
+    1,
+  );
+  assert.equal(
+    compareClaims(
+      claim("FLUSH", "Q", undefined, "S"),
+      claim("FLUSH", "K", undefined, "S"),
+    ),
+    1,
+  );
+  assert.equal(
+    compareClaims(
+      claim("FLUSH", "6", undefined, "S"),
+      claim("FLUSH", "7", undefined, "S"),
+    ),
+    1,
+  );
 });
 
 test("Straight Flush uses normal high-card ordering", () => {
   assert.equal(
-    compareClaims(claim("STRAIGHT_FLUSH", "K", undefined, "H"), claim("STRAIGHT_FLUSH", "Q", undefined, "H")),
-    1
+    compareClaims(
+      claim("STRAIGHT_FLUSH", "K", undefined, "H"),
+      claim("STRAIGHT_FLUSH", "Q", undefined, "H"),
+    ),
+    1,
   );
 });
 
 test("Royal Flush is not ranked by suit", () => {
-  assert.equal(compareClaims(claim("ROYAL_FLUSH", undefined, undefined, "H"), claim("ROYAL_FLUSH", undefined, undefined, "S")), 0);
-  assert.equal(isClaimStrictlyHigher(claim("ROYAL_FLUSH", undefined, undefined, "H"), claim("ROYAL_FLUSH", undefined, undefined, "S")), false);
+  assert.equal(
+    compareClaims(
+      claim("ROYAL_FLUSH", undefined, undefined, "H"),
+      claim("ROYAL_FLUSH", undefined, undefined, "S"),
+    ),
+    0,
+  );
+  assert.equal(
+    isClaimStrictlyHigher(
+      claim("ROYAL_FLUSH", undefined, undefined, "H"),
+      claim("ROYAL_FLUSH", undefined, undefined, "S"),
+    ),
+    false,
+  );
 });
 
 test("Ace-low straight requires the Ace", () => {
-  const cards = [createCard("2", "S"), createCard("3", "H"), createCard("4", "D"), createCard("5", "C")];
+  const cards = [
+    createCard("2", "S"),
+    createCard("3", "H"),
+    createCard("4", "D"),
+    createCard("5", "C"),
+  ];
 
   assert.equal(evaluateClaim(claim("STRAIGHT", "5"), cards), false);
 });
@@ -94,7 +161,7 @@ test("Ace-low straight evaluates true with A, 2, 3, 4, 5", () => {
     createCard("2", "H"),
     createCard("3", "D"),
     createCard("4", "C"),
-    createCard("5", "S")
+    createCard("5", "S"),
   ];
 
   assert.equal(evaluateClaim(claim("STRAIGHT", "5"), cards), true);
@@ -106,11 +173,14 @@ test("regular Flush requires high card and four lower same-suit cards", () => {
     createCard("Q", "H"),
     createCard("9", "H"),
     createCard("6", "H"),
-    createCard("2", "H")
+    createCard("2", "H"),
   ];
 
   assert.equal(evaluateClaim(claim("FLUSH", "K", undefined, "H"), cards), true);
-  assert.equal(evaluateClaim(claim("FLUSH", "A", undefined, "H"), cards), false);
+  assert.equal(
+    evaluateClaim(claim("FLUSH", "A", undefined, "H"), cards),
+    false,
+  );
 });
 
 test("5-high Straight Flush requires suited Ace", () => {
@@ -119,10 +189,13 @@ test("5-high Straight Flush requires suited Ace", () => {
     createCard("3", "D"),
     createCard("4", "D"),
     createCard("5", "D"),
-    createCard("A", "S")
+    createCard("A", "S"),
   ];
 
-  assert.equal(evaluateClaim(claim("STRAIGHT_FLUSH", "5", undefined, "D"), cards), false);
+  assert.equal(
+    evaluateClaim(claim("STRAIGHT_FLUSH", "5", undefined, "D"), cards),
+    false,
+  );
 });
 
 test("findClaimProof returns exact proof cards for a true Full House", () => {
@@ -132,13 +205,16 @@ test("findClaimProof returns exact proof cards for a true Full House", () => {
     createCard("Q", "D"),
     createCard("7", "C"),
     createCard("7", "D"),
-    createCard("2", "S")
+    createCard("2", "S"),
   ];
 
   const proof = findClaimProof(claim("FULL_HOUSE", "Q", "7"), cards);
 
-  assert.deepEqual(
-    proof?.map((card) => card.id).sort(),
-    ["7C", "7D", "QD", "QH", "QS"]
-  );
+  assert.deepEqual(proof?.map((card) => card.id).sort(), [
+    "7C",
+    "7D",
+    "QD",
+    "QH",
+    "QS",
+  ]);
 });

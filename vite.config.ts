@@ -4,13 +4,10 @@ import { defineConfig } from "vite";
 export default defineConfig({
   plugins: [react()],
   build: {
-    target: "esnext"
-  },
-  esbuild: {
-    target: "esnext"
+    target: "esnext",
   },
   server: {
     port: 5173,
-    strictPort: false
-  }
+    strictPort: false,
+  },
 });

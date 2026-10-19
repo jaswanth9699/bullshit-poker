@@ -109,16 +109,6 @@ function roomPathFromApi(
 
   const [, code, suffix] = match;
   if (suffix === "/join") return { code, roomPath: "/room/join" };
-  if (suffix === "/bots/add") return { code, roomPath: "/room/bots/add" };
-  if (suffix === "/bots/remove") return { code, roomPath: "/room/bots/remove" };
-  if (suffix === "/players/remove")
-    return { code, roomPath: "/room/players/remove" };
-  if (suffix === "/start") return { code, roomPath: "/room/start" };
-  if (suffix === "/next-round") return { code, roomPath: "/room/next-round" };
-  if (suffix === "/actions/submit-claim")
-    return { code, roomPath: "/room/actions/submit-claim" };
-  if (suffix === "/actions/call-bullshit")
-    return { code, roomPath: "/room/actions/call-bullshit" };
   return null;
 }
 
@@ -200,4 +190,4 @@ export default {
   },
 };
 
-export { RoomDurableObject } from "../durable-objects/roomDurableObject.ts";
+export { RoomDurableObjectV2 } from "../durable-objects/roomDurableObject.ts";

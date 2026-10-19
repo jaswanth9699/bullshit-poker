@@ -1,8 +1,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { DurableObjectRoomStateStore, ROOM_STATE_STORAGE_KEY, type DurableObjectStorageLike } from "../../src/durable-objects/index.ts";
-import { createCard, type GameState, type PlayerState } from "../../src/shared/index.ts";
+import {
+  DurableObjectRoomStateStore,
+  ROOM_STATE_STORAGE_KEY,
+  type DurableObjectStorageLike,
+} from "../../src/durable-objects/index.ts";
+import {
+  createCard,
+  type GameState,
+  type PlayerState,
+} from "../../src/shared/index.ts";
 
 class FakeDurableObjectStorage implements DurableObjectStorageLike {
   readonly values = new Map<string, unknown>();
@@ -27,7 +35,7 @@ function player(id: string): PlayerState {
     eliminated: false,
     connected: true,
     isBot: false,
-    roundCards: [createCard("A", "S")]
+    roundCards: [createCard("A", "S")],
   };
 }
 
@@ -41,7 +49,7 @@ function gameState(): GameState {
     players: [player("A")],
     roundNumber: 0,
     claimHistory: [],
-    turnDurationMs: 120000
+    turnDurationMs: 120000,
   };
 }
 

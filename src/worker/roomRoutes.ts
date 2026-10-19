@@ -13,7 +13,6 @@ import type {
   Rng,
   RoomIdentityProvider,
   ServerActionResult,
-  StartGameInput,
   SubmitClaimPayload,
 } from "../shared/index.ts";
 

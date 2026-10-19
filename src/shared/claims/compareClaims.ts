@@ -4,7 +4,7 @@ import {
   HAND_CLASS_VALUE,
   STRAIGHT_FLUSH_HIGH_RANKS,
   STRAIGHT_HIGH_RANKS,
-  type Claim
+  type Claim,
 } from "./claimTypes.ts";
 
 function assertRank(rank: Rank | undefined, label: string): Rank {
@@ -14,13 +14,20 @@ function assertRank(rank: Rank | undefined, label: string): Rank {
   return rank;
 }
 
-function assertAllowedRank(rank: Rank, allowed: readonly Rank[], label: string): void {
+function assertAllowedRank(
+  rank: Rank,
+  allowed: readonly Rank[],
+  label: string,
+): void {
   if (!allowed.includes(rank)) {
     throw new Error(`${rank} is not legal for ${label}`);
   }
 }
 
-function compareNumberArrays(left: readonly number[], right: readonly number[]): -1 | 0 | 1 {
+function compareNumberArrays(
+  left: readonly number[],
+  right: readonly number[],
+): -1 | 0 | 1 {
   const length = Math.max(left.length, right.length);
   for (let index = 0; index < length; index += 1) {
     const leftValue = left[index] ?? 0;
@@ -43,12 +50,14 @@ export function normalizeClaimShape(claim: Claim): Claim {
   }
 
   const [highPairRank, lowPairRank] =
-    rankValue(firstRank) > rankValue(secondRank) ? [firstRank, secondRank] : [secondRank, firstRank];
+    rankValue(firstRank) > rankValue(secondRank)
+      ? [firstRank, secondRank]
+      : [secondRank, firstRank];
 
   return {
     ...claim,
     primaryRank: highPairRank,
-    secondaryRank: lowPairRank
+    secondaryRank: lowPairRank,
   };
 }
 
@@ -64,26 +73,48 @@ export function validateClaimShape(claim: Claim): void {
       return;
 
     case "TWO_PAIR": {
-      const highPairRank = assertRank(normalized.primaryRank, "Two Pair highPairRank");
-      const lowPairRank = assertRank(normalized.secondaryRank, "Two Pair lowPairRank");
+      const highPairRank = assertRank(
+        normalized.primaryRank,
+        "Two Pair highPairRank",
+      );
+      const lowPairRank = assertRank(
+        normalized.secondaryRank,
+        "Two Pair lowPairRank",
+      );
       if (rankValue(highPairRank) <= rankValue(lowPairRank)) {
-        throw new Error("Two Pair primaryRank must be higher than secondaryRank after normalization");
+        throw new Error(
+          "Two Pair primaryRank must be higher than secondaryRank after normalization",
+        );
       }
       return;
     }
 
     case "STRAIGHT":
-      assertAllowedRank(assertRank(normalized.primaryRank, "Straight highRank"), STRAIGHT_HIGH_RANKS, "Straight");
+      assertAllowedRank(
+        assertRank(normalized.primaryRank, "Straight highRank"),
+        STRAIGHT_HIGH_RANKS,
+        "Straight",
+      );
       return;
 
     case "FLUSH":
-      assertAllowedRank(assertRank(normalized.primaryRank, "Flush highRank"), FLUSH_HIGH_RANKS, "Flush");
+      assertAllowedRank(
+        assertRank(normalized.primaryRank, "Flush highRank"),
+        FLUSH_HIGH_RANKS,
+        "Flush",
+      );
       if (!normalized.suit) throw new Error("Missing Flush suit");
       return;
 
     case "FULL_HOUSE": {
-      const tripsRank = assertRank(normalized.primaryRank, "Full House tripsRank");
-      const pairRank = assertRank(normalized.secondaryRank, "Full House pairRank");
+      const tripsRank = assertRank(
+        normalized.primaryRank,
+        "Full House tripsRank",
+      );
+      const pairRank = assertRank(
+        normalized.secondaryRank,
+        "Full House pairRank",
+      );
       if (tripsRank === pairRank) {
         throw new Error("Full House ranks must be different");
       }
@@ -94,7 +125,7 @@ export function validateClaimShape(claim: Claim): void {
       assertAllowedRank(
         assertRank(normalized.primaryRank, "Straight Flush highRank"),
         STRAIGHT_FLUSH_HIGH_RANKS,
-        "Straight Flush"
+        "Straight Flush",
       );
       if (!normalized.suit) throw new Error("Missing Straight Flush suit");
       return;
@@ -122,7 +153,7 @@ function tieBreakValues(claim: Claim): number[] {
     case "FULL_HOUSE":
       return [
         rankValue(assertRank(normalized.primaryRank, "primaryRank")),
-        rankValue(assertRank(normalized.secondaryRank, "secondaryRank"))
+        rankValue(assertRank(normalized.secondaryRank, "secondaryRank")),
       ];
 
     case "FLUSH":
@@ -142,7 +173,10 @@ export function compareClaims(left: Claim, right: Claim): -1 | 0 | 1 {
   if (leftClass > rightClass) return 1;
   if (leftClass < rightClass) return -1;
 
-  return compareNumberArrays(tieBreakValues(normalizedLeft), tieBreakValues(normalizedRight));
+  return compareNumberArrays(
+    tieBreakValues(normalizedLeft),
+    tieBreakValues(normalizedRight),
+  );
 }
 
 export function isClaimStrictlyHigher(next: Claim, previous?: Claim): boolean {

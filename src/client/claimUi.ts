@@ -5,7 +5,7 @@ import {
   type ClaimTemplate,
   type HandType,
   type Rank,
-  type Suit
+  type Suit,
 } from "../shared/index.ts";
 
 export const HAND_TYPE_LABELS: Record<HandType, string> = {
@@ -18,7 +18,7 @@ export const HAND_TYPE_LABELS: Record<HandType, string> = {
   FULL_HOUSE: "Full House",
   FOUR_OF_A_KIND: "Four of a Kind",
   STRAIGHT_FLUSH: "Straight Flush",
-  ROYAL_FLUSH: "Royal Flush"
+  ROYAL_FLUSH: "Royal Flush",
 };
 
 export const RANK_WORDS: Record<Rank, string> = {
@@ -34,7 +34,7 @@ export const RANK_WORDS: Record<Rank, string> = {
   J: "Jacks",
   Q: "Queens",
   K: "Kings",
-  A: "Aces"
+  A: "Aces",
 };
 
 export const RANK_SHORT: Record<Rank, string> = {
@@ -50,17 +50,20 @@ export const RANK_SHORT: Record<Rank, string> = {
   J: "J",
   Q: "Q",
   K: "K",
-  A: "A"
+  A: "A",
 };
 
 const SUIT_SYMBOLS: Record<Suit, string> = {
   S: "♠",
   H: "♥",
   D: "♦",
-  C: "♣"
+  C: "♣",
 };
 
-export function playerName(players: readonly { id: string; name: string }[], playerId?: string): string {
+export function playerName(
+  players: readonly { id: string; name: string }[],
+  playerId?: string,
+): string {
   if (!playerId) return "None";
   return players.find((player) => player.id === playerId)?.name ?? playerId;
 }
@@ -78,7 +81,7 @@ export function claimKey(claim: Claim): string {
     claim.handType,
     claim.primaryRank ?? "",
     claim.secondaryRank ?? "",
-    claim.suit ?? ""
+    claim.suit ?? "",
   ].join(":");
 }
 
@@ -140,6 +143,6 @@ export function legalClaimsByHandType(currentClaim?: Claim): Array<{
   return [...groups.entries()].map(([handType, claims]) => ({
     handType,
     label: HAND_TYPE_LABELS[handType],
-    claims
+    claims,
   }));
 }

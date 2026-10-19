@@ -1,9 +1,15 @@
 import type { Card } from "../cards/cardTypes.ts";
 import type { GameState, PlayerState } from "./gameTypes.ts";
 
-export type PublicPlayerView = Omit<PlayerState, "normalizedName" | "roundCards">;
+export type PublicPlayerView = Omit<
+  PlayerState,
+  "normalizedName" | "roundCards" | "departure"
+>;
 
-export type PublicGameView = Omit<GameState, "players" | "playerCredentials"> & {
+export type PublicGameView = Omit<
+  GameState,
+  "players" | "playerCredentials" | "leaveReceipts"
+> & {
   players: PublicPlayerView[];
 };
 
@@ -25,20 +31,31 @@ function publicPlayerView(player: PlayerState): PublicPlayerView {
     eliminated: player.eliminated,
     connected: player.connected,
     isBot: player.isBot,
-    leftAt: player.leftAt
+    ready: player.ready,
+    leftAt: player.leftAt,
   };
 }
 
 export function createPublicGameView(state: GameState): PublicGameView {
+  const visiblePlayers =
+    state.phase === "Lobby"
+      ? state.players.filter((player) => player.leftAt === undefined)
+      : state.players;
+
   return {
     roomId: state.roomId,
     code: state.code,
     phase: state.phase,
     stateRevision: state.stateRevision,
+    socialRevision: state.socialRevision,
+    matchId: state.matchId,
+    matchNumber: state.matchNumber,
     hostPlayerId: state.hostPlayerId,
-    players: state.players.map(publicPlayerView),
+    players: visiblePlayers.map(publicPlayerView),
     roundNumber: state.roundNumber,
+    roundParticipantIds: state.roundParticipantIds,
     startingPlayerId: state.startingPlayerId,
+    finalDecisionPlayerId: state.finalDecisionPlayerId,
     currentTurnPlayerId: state.currentTurnPlayerId,
     currentTurnId: state.currentTurnId,
     currentClaim: state.currentClaim,
@@ -48,15 +65,22 @@ export function createPublicGameView(state: GameState): PublicGameView {
     turnExpiresAt: state.turnExpiresAt,
     turnDurationMs: state.turnDurationMs,
     lastRoundResult: state.lastRoundResult,
-    winnerPlayerId: state.winnerPlayerId
+    winnerPlayerId: state.winnerPlayerId,
+    matchEndedReason: state.matchEndedReason,
+    endedByPlayerId: state.endedByPlayerId,
+    endedAt: state.endedAt,
+    reactions: state.reactions,
   };
 }
 
-export function createPrivateGameView(state: GameState, viewerPlayerId: string): PrivateGameView {
+export function createPrivateGameView(
+  state: GameState,
+  viewerPlayerId: string,
+): PrivateGameView {
   const viewer = state.players.find((player) => player.id === viewerPlayerId);
   const currentClaim = state.currentClaim;
   const viewerIsActive = Boolean(
-    viewer && !viewer.eliminated && viewer.leftAt === undefined
+    viewer && !viewer.eliminated && viewer.leftAt === undefined,
   );
 
   return {
@@ -70,10 +94,10 @@ export function createPrivateGameView(state: GameState, viewerPlayerId: string):
       state.currentTurnPlayerId === viewerPlayerId,
     canViewerCallBullShit: Boolean(
       state.phase === "RoundActive" &&
-        currentClaim &&
-        currentClaim.playerId !== viewerPlayerId &&
-        state.activeClaimWindow?.status === "OPEN" &&
-        viewerIsActive
-    )
+      currentClaim &&
+      currentClaim.playerId !== viewerPlayerId &&
+      state.activeClaimWindow?.status === "OPEN" &&
+      viewerIsActive,
+    ),
   };
 }

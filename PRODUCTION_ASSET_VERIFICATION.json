@@ -1,0 +1,65 @@
+{
+  "checked_on": "2026-10-18 America/Los_Angeles",
+  "assets": [
+    {
+      "file": "assets/KineticScene-A2yM70ST.js",
+      "matches": true,
+      "sha256": "a62272539628c3c2b691372416608acdce88de09539d471f3b9f8fc217a62876",
+      "url": "https://bullshit-poker.every-day.workers.dev/assets/KineticScene-A2yM70ST.js"
+    },
+    {
+      "file": "assets/index-DhLHl0xD.js",
+      "matches": true,
+      "sha256": "e5449a494b40e7879cef8259b07fba56ffe8e63d7c83be801c33d8091455581a",
+      "url": "https://bullshit-poker.every-day.workers.dev/assets/index-DhLHl0xD.js"
+    },
+    {
+      "file": "assets/index-W4XWtCQj.css",
+      "matches": true,
+      "sha256": "357bba68e3618be04a39d8b39664d95aa52cb8d69a0dcec08fec174c7145ef5f",
+      "url": "https://bullshit-poker.every-day.workers.dev/assets/index-W4XWtCQj.css"
+    },
+    {
+      "file": "assets/kinetic-cardroom-launch-v2-DQQZM27a.webp",
+      "matches": true,
+      "sha256": "4d4be0024bf34e98ce9d88f08f973ef818685e3566525d4c1a5ba43790e7ecc7",
+      "url": "https://bullshit-poker.every-day.workers.dev/assets/kinetic-cardroom-launch-v2-DQQZM27a.webp"
+    },
+    {
+      "file": "assets/kinetic-cardroom-launch-wide-v2-qUgf5spL.webp",
+      "matches": true,
+      "sha256": "529b30f1a3ec51f113d04f54e9c51a72a9e5228265ff37a2ddc56f95eb966261",
+      "url": "https://bullshit-poker.every-day.workers.dev/assets/kinetic-cardroom-launch-wide-v2-qUgf5spL.webp"
+    },
+    {
+      "file": "assets/poker-entry-background-D7pI-GkK.jpg",
+      "matches": true,
+      "sha256": "f590a3db9829cd6e749bb8aad547da98f5f7751d7ed5e9670a0016e699759d45",
+      "url": "https://bullshit-poker.every-day.workers.dev/assets/poker-entry-background-D7pI-GkK.jpg"
+    },
+    {
+      "file": "icon.svg",
+      "matches": true,
+      "sha256": "bfbb6be94409a56c1d9e73d096e3b17c6e2f2686435ffb1591cdf9372164500b",
+      "url": "https://bullshit-poker.every-day.workers.dev/icon.svg"
+    },
+    {
+      "file": "index.html",
+      "matches": true,
+      "sha256": "d1171459fcff9239e435db439a10f667745b61735ab02b787d7402ed01070f7f",
+      "url": "https://bullshit-poker.every-day.workers.dev/"
+    },
+    {
+      "file": "manifest.webmanifest",
+      "matches": true,
+      "sha256": "910c4864b75b4208c0f589fedc788750f6da20ac8a68480563a37dff29bfa3f5",
+      "url": "https://bullshit-poker.every-day.workers.dev/manifest.webmanifest"
+    },
+    {
+      "file": "sw.js",
+      "matches": true,
+      "sha256": "af487f194a96b390fd0be1e6ce548aeec2a1ccde10c2628bca9127a14d8d5cbb",
+      "url": "https://bullshit-poker.every-day.workers.dev/sw.js"
+    }
+  ]
+}

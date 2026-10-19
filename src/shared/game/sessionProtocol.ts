@@ -6,6 +6,7 @@ import type {
   SubmitClaimPayload,
 } from "./protocol.ts";
 import type { RoundResult } from "./gameTypes.ts";
+import type { ReactionKind } from "./gameTypes.ts";
 
 export type SubmitClaimClientMessage = {
   type: "SUBMIT_CLAIM";
@@ -50,6 +51,36 @@ export type StartNextRoundClientMessage = {
   requestId: string;
 };
 
+export type LeaveGameClientMessage = {
+  type: "LEAVE_GAME";
+  requestId: string;
+  matchId: string;
+};
+
+export type SetReadyClientMessage = {
+  type: "SET_READY";
+  requestId: string;
+  ready: boolean;
+};
+
+export type EndGameClientMessage = {
+  type: "END_GAME";
+  requestId: string;
+  matchId: string;
+};
+
+export type StartRematchClientMessage = {
+  type: "START_REMATCH";
+  requestId: string;
+  matchId: string;
+};
+
+export type SendReactionClientMessage = {
+  type: "SEND_REACTION";
+  requestId: string;
+  kind: ReactionKind;
+};
+
 export type ClientPingMessage = {
   type: "PING";
   requestId: string;
@@ -64,7 +95,24 @@ export type RoomClientMessage =
   | RemovePlayerClientMessage
   | StartGameClientMessage
   | StartNextRoundClientMessage
+  | LeaveGameClientMessage
+  | SetReadyClientMessage
+  | EndGameClientMessage
+  | StartRematchClientMessage
+  | SendReactionClientMessage
   | ClientPingMessage;
+
+export type LeaveAcceptedServerMessage = {
+  type: "LEAVE_ACCEPTED";
+  requestId: string;
+  matchId: string;
+  roomAbandoned: boolean;
+};
+
+export type SeatRemovedServerMessage = {
+  type: "SEAT_REMOVED";
+  reason: "HOST_REMOVED";
+};
 
 export type SessionAcceptedServerMessage = {
   type: "SESSION_ACCEPTED";
@@ -83,6 +131,7 @@ export type RoomUpdatedReason =
   | "CONNECTED"
   | "DISCONNECTED"
   | "ACTION_ACCEPTED"
+  | "PLAYER_LEFT"
   | "AUTO_NEXT_ROUND"
   | "SYNC_REQUESTED";
 
@@ -113,4 +162,6 @@ export type RoomServerMessage =
   | SessionRejectedServerMessage
   | RoomUpdatedServerMessage
   | ActionRejectedServerMessage
+  | LeaveAcceptedServerMessage
+  | SeatRemovedServerMessage
   | PongServerMessage;
