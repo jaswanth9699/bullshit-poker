@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+} from "react";
 import {
   Bot,
   Check,
@@ -53,6 +60,7 @@ import type {
   RoomServerMessage,
   Suit,
 } from "../shared/index.ts";
+import { MAX_PLAYERS } from "../shared/index.ts";
 
 const STORAGE_KEY = "bullshit-poker-seat";
 
@@ -194,6 +202,7 @@ export function App() {
     }
     if (message.type === "ROOM_UPDATED") {
       setView(message.view);
+      setNotice("");
       if (message.roundResult) {
         setLastRoundOpen(message.view.phase !== "GameOver");
       }
@@ -484,6 +493,8 @@ function WinnerExitPage(props: {
     <main className="winner-layout">
       <section className="winner-hero" aria-label="Game over">
         <div className="winner-trophy">
+          <span className="winner-orbit" aria-hidden="true" />
+          <span className="winner-orbit second" aria-hidden="true" />
           <Trophy size={48} />
         </div>
         <span className="winner-kicker">Table Closed</span>
@@ -564,11 +575,27 @@ function EntryScreen(props: {
     <main className="entry-shell">
       <section className="entry-panel">
         <div className="brand-lockup">
-          <span className="brand-mark">BS</span>
+          <span className="brand-mark" aria-label="BullShit Poker cards logo">
+            <span className="logo-card logo-card-back" aria-hidden="true">
+              A
+            </span>
+            <span className="logo-card logo-card-mid" aria-hidden="true">
+              ♦
+            </span>
+            <span className="logo-card logo-card-front" aria-hidden="true">
+              ?
+            </span>
+          </span>
           <div>
             <h1>BullShit Poker</h1>
             <p>Bluff hard. Call harder.</p>
           </div>
+        </div>
+        <div className="entry-signal" aria-hidden="true">
+          <span />
+          <span />
+          <span />
+          <span />
         </div>
 
         <div className="entry-toggle" role="tablist" aria-label="Entry mode">
@@ -679,8 +706,10 @@ function TopBar(props: {
         ? "Code selected"
         : "Copy room code";
 
+  const needsReconnect = canReconnect(props.status);
+
   return (
-    <header className="top-bar">
+    <header className={`top-bar ${needsReconnect ? "needs-reconnect" : ""}`}>
       <div className="room-code-block">
         <span className="room-label">Room</span>
         <div className="room-code-row">
@@ -708,7 +737,7 @@ function TopBar(props: {
             Cards {activeCardTotal}
           </span>
         )}
-        {canReconnect(props.status) && (
+        {needsReconnect && (
           <button
             className="secondary-action compact reconnect-action"
             onClick={props.onReconnect}
@@ -738,10 +767,25 @@ function Lobby(props: {
   onRemovePlayer: (targetPlayerId: string) => void;
   onStartGame: () => void;
 }) {
+  const seatedCount = props.view.players.length;
+  const capacityPercent = `${Math.min(100, (seatedCount / MAX_PLAYERS) * 100)}%`;
+
   return (
     <main className="lobby-layout">
       <section className="lobby-header">
-        <h2>Lobby</h2>
+        <div className="lobby-title-block">
+          <span className="section-kicker">Table Setup</span>
+          <h2>Lobby</h2>
+          <div
+            className="capacity-meter"
+            aria-label={`${seatedCount} of ${MAX_PLAYERS} seats filled`}
+          >
+            <span style={{ width: capacityPercent }} />
+          </div>
+          <strong className="capacity-copy">
+            {seatedCount} / {MAX_PLAYERS} seated
+          </strong>
+        </div>
         <div className="lobby-actions">
           {props.view.isViewerHost && (
             <button
@@ -771,6 +815,7 @@ function Lobby(props: {
             player={player}
             active={player.id === props.view.viewerPlayerId}
             isViewer={player.id === props.view.viewerPlayerId}
+            isHost={player.id === props.view.hostPlayerId}
             canRemove={
               props.view.isViewerHost && player.id !== props.view.hostPlayerId
             }
@@ -832,24 +877,33 @@ function GameTable(props: {
             player={player}
             active={player.id === props.view.currentTurnPlayerId}
             isViewer={player.id === props.view.viewerPlayerId}
+            isHost={player.id === props.view.hostPlayerId}
             isRoundStarter={player.id === props.view.startingPlayerId}
             compact
           />
         ))}
       </section>
 
-      <section className="claim-zone">
+      <section className={`claim-zone ${props.view.phase.toLowerCase()}`}>
+        <div className="claim-orbit" aria-hidden="true">
+          <span />
+          <span />
+          <span />
+        </div>
         <div className="claim-meta">
           <span>Round {props.view.roundNumber}</span>
           <span>{phaseLabel}</span>
         </div>
-        {isGameOver && (
-          <div className="winner-mark" aria-label="Game winner">
-            <Trophy size={30} />
-          </div>
-        )}
-        <h2>{turnHeading}</h2>
-        <div className="claim-byline">{previousClaim}</div>
+        <div className="claim-core-card">
+          {isGameOver && (
+            <div className="winner-mark" aria-label="Game winner">
+              <Trophy size={30} />
+            </div>
+          )}
+          <span className="claim-core-label">Claim Core</span>
+          <h2>{turnHeading}</h2>
+          <div className="claim-byline">{previousClaim}</div>
+        </div>
 
         <ClaimTimeline view={props.view} />
 
@@ -918,6 +972,7 @@ function PlayerSeat(props: {
   active?: boolean;
   compact?: boolean;
   isViewer?: boolean;
+  isHost?: boolean;
   isRoundStarter?: boolean;
   canRemove?: boolean;
   onRemove?: () => void;
@@ -925,18 +980,32 @@ function PlayerSeat(props: {
   const statusText = props.player.eliminated
     ? "Eliminated"
     : `${props.player.cardCount} cards`;
+  const compactStyle = props.compact
+    ? compactSeatStyle(
+        props.player.name,
+        [
+          props.isViewer,
+          props.isHost,
+          !props.player.connected && !props.player.eliminated,
+        ].filter(Boolean).length,
+      )
+    : undefined;
 
   return (
     <div
       className={`player-seat ${props.active ? "active" : ""} ${props.compact ? "compact" : ""}`}
+      style={compactStyle}
     >
       <div className="seat-avatar">
         {props.player.isBot ? <Bot size={18} /> : <UsersRound size={18} />}
       </div>
+      {props.isRoundStarter && props.compact && (
+        <Star size={14} className="starter-star" aria-label="Round starter" />
+      )}
       <div className="seat-copy">
         <strong className="seat-name-row">
           <span>{props.player.name}</span>
-          {props.isRoundStarter && (
+          {props.isRoundStarter && !props.compact && (
             <Star
               size={14}
               className="starter-star"
@@ -948,6 +1017,7 @@ function PlayerSeat(props: {
       </div>
       <div className="seat-badges">
         {props.isViewer && <span className="seat-flag you">you</span>}
+        {props.isHost && <span className="seat-flag host">host</span>}
         {!props.player.connected && !props.player.eliminated && (
           <span className="seat-flag">offline</span>
         )}
@@ -965,6 +1035,24 @@ function PlayerSeat(props: {
   );
 }
 
+type CompactSeatStyle = CSSProperties & {
+  "--compact-seat-width": string;
+  "--compact-badge-padding": string;
+};
+
+function compactSeatStyle(name: string, badgeCount: number): CompactSeatStyle {
+  const visibleChars = Math.max(3, Array.from(name.trim()).length);
+  const badgeLane = badgeCount > 0 ? 8 + badgeCount * 18 + (badgeCount - 1) * 3 : 0;
+  const preferredWidth = Math.round(
+    Math.min(380, Math.max(154, 100 + visibleChars * 8.8 + badgeLane)),
+  );
+
+  return {
+    "--compact-seat-width": `min(${preferredWidth}px, 86vw)`,
+    "--compact-badge-padding": `${badgeLane > 0 ? badgeLane + 8 : 10}px`,
+  };
+}
+
 function ClaimTimeline(props: { view: PrivateGameView }) {
   const claims = props.view.claimHistory;
   return (
@@ -972,8 +1060,13 @@ function ClaimTimeline(props: { view: PrivateGameView }) {
       {claims.length === 0 ? (
         <span className="timeline-empty">No claims</span>
       ) : (
-        claims.map((claim) => (
-          <div key={claim.id ?? claimKey(claim)} className="timeline-item">
+        claims.map((claim, index) => (
+          <div
+            key={claim.id ?? claimKey(claim)}
+            className="timeline-item"
+            style={{ "--timeline-index": index } as CSSProperties}
+          >
+            <i className="timeline-dot" aria-hidden="true" />
             <span>{playerName(props.view.players, claim.playerId)}</span>
             <strong>{compactClaim(claim)}</strong>
           </div>
@@ -1145,6 +1238,14 @@ function StructuredClaimBuilder(props: {
 
   return (
     <div className="structured-claim-builder">
+      <div className="claim-preview-card">
+        <span>Claim Preview</span>
+        <strong>{selectedClaim ? compactClaim(selectedClaim) : "..."}</strong>
+        <small>
+          {selectedClaim ? formatClaim(selectedClaim) : "Select a legal claim"}
+        </small>
+      </div>
+
       <div className="claim-select-grid">
         <label>
           <span>{rankSelectLabel(props.group.handType, "primary")}</span>
@@ -1228,6 +1329,7 @@ function ClaimPicker(props: {
   return (
     <div className="sheet-backdrop" role="dialog" aria-modal="true">
       <section className="claim-sheet">
+        <div className="sheet-scanline" aria-hidden="true" />
         <header className="sheet-header">
           <div>
             <span>{isFinalDecision ? "Final Claim" : "Make Claim"}</span>
@@ -1288,10 +1390,23 @@ function ClaimPicker(props: {
 function LastRoundSheet(props: { view: PrivateGameView; onClose: () => void }) {
   const result = props.view.lastRoundResult!;
   const proofIds = new Set(result.proofCardIds ?? []);
+  const truthTone =
+    result.claimWasTrue === undefined
+      ? "neutral"
+      : result.claimWasTrue
+        ? "true"
+        : "false";
+  const truthLabel =
+    result.claimWasTrue === undefined
+      ? result.reason
+      : result.claimWasTrue
+        ? "True Claim"
+        : "False Claim";
 
   return (
     <div className="sheet-backdrop" role="dialog" aria-modal="true">
       <section className="review-sheet">
+        <div className="sheet-scanline" aria-hidden="true" />
         <header className="sheet-header">
           <div>
             <span>Round {result.roundNumber}</span>
@@ -1301,6 +1416,16 @@ function LastRoundSheet(props: { view: PrivateGameView; onClose: () => void }) {
             <X size={18} />
           </button>
         </header>
+
+        <div className={`truth-stage ${truthTone}`}>
+          <span>Truth Reveal</span>
+          <strong>{truthLabel}</strong>
+          <small>
+            {result.penaltyPlayerId
+              ? `${playerName(props.view.players, result.penaltyPlayerId)} takes the card`
+              : "No penalty this round"}
+          </small>
+        </div>
 
         <div className="result-summary">
           <ResultLine
@@ -1315,25 +1440,14 @@ function LastRoundSheet(props: { view: PrivateGameView; onClose: () => void }) {
             label="Claimed by"
             value={playerName(props.view.players, result.claimantPlayerId)}
           />
-          <ResultLine
-            label="Truth"
-            value={
-              result.claimWasTrue === undefined
-                ? result.reason
-                : result.claimWasTrue
-                  ? "True"
-                  : "False"
-            }
-          />
-          <ResultLine
-            label="Penalty"
-            value={playerName(props.view.players, result.penaltyPlayerId)}
-          />
         </div>
 
         <div className="revealed-groups">
           {result.revealedHands.map((hand) => (
-            <div key={hand.playerId} className="revealed-group">
+            <div
+              key={hand.playerId}
+              className={`revealed-group ${hand.playerId === result.penaltyPlayerId ? "penalty" : ""}`}
+            >
               <strong>{playerName(props.view.players, hand.playerId)}</strong>
               <div className="mini-card-row">
                 {hand.cards.map((card) => (

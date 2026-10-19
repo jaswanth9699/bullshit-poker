@@ -14,7 +14,7 @@ function randomIndexBelow(maxExclusive: number, rng: Rng): number {
   }
 
   const randomValue = rng();
-  if (randomValue < 0 || randomValue >= 1) {
+  if (!Number.isFinite(randomValue) || randomValue < 0 || randomValue >= 1) {
     throw new Error("RNG must return a number in the range [0, 1)");
   }
   return Math.floor(randomValue * maxExclusive);

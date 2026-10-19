@@ -330,7 +330,7 @@ test("room HTTP add-bot route validates host player id", async () => {
   assert.equal((await responseJson(response)).code, "INVALID_ADD_BOT_REQUEST");
 });
 
-test("room HTTP routes advance from resolved round into the next round", async () => {
+test("internal room action routes persist resolution and redeal together", async () => {
   const context = {
     authority: new RoomAuthority(new MemoryRoomStateStore()),
     identity: identityProvider(),
@@ -378,7 +378,7 @@ test("room HTTP routes advance from resolved round into the next round", async (
     unknown
   >;
 
-  await handleRoomHttpRequest(
+  const resolutionResponse = await handleRoomHttpRequest(
     jsonRequest("/room/actions/call-bullshit", {
       envelope: {
         requestId: "call-1",
@@ -393,15 +393,18 @@ test("room HTTP routes advance from resolved round into the next round", async (
     context,
   );
 
-  const nextRoundResponse = await handleRoomHttpRequest(
-    jsonRequest("/room/next-round", {}),
-    context,
-  );
-  const nextRoundBody = await responseJson(nextRoundResponse);
+  const nextRoundBody = await responseJson(resolutionResponse);
   const nextRoundState = nextRoundBody.view as Record<string, unknown>;
 
   assert.equal(nextRoundBody.ok, true);
   assert.equal(nextRoundState.phase, "RoundActive");
   assert.equal(nextRoundState.roundNumber, 2);
   assert.equal(nextRoundState.startingPlayerId, "player-2");
+  assert.equal(
+    (nextRoundBody.roundResult as Record<string, unknown>).roundNumber,
+    1,
+  );
+  const persisted = await context.authority.getState();
+  assert.equal(persisted?.phase, "RoundActive");
+  assert.equal(persisted?.roundNumber, 2);
 });

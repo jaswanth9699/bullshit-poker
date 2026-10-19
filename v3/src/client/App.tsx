@@ -6,6 +6,8 @@ import {
   useRef,
   useState,
   Suspense,
+  Component,
+  type ReactNode,
   type CSSProperties,
 } from "react";
 import QRCode from "qrcode";
@@ -23,7 +25,6 @@ import {
   LogIn,
   Plus,
   RotateCcw,
-  RefreshCw,
   ShieldAlert,
   Share2,
   SlidersHorizontal,
@@ -63,8 +64,11 @@ import type {
   PrivateGameView,
   PublicPlayerView,
   Rank,
+  ReactionEvent,
   ReactionKind,
+  RoomClientMessage,
   RoomServerMessage,
+  RoundResult,
   Suit,
 } from "../shared/index.ts";
 import { MAX_PLAYERS } from "../shared/index.ts";
@@ -73,8 +77,37 @@ import { deriveVisualEvents, visualEventBus } from "./visualEvents.ts";
 const KineticScene = lazy(() => import("./KineticScene"));
 const LivingTableScene = lazy(() => import("./LivingTableScene"));
 
+class SceneBoundary extends Component<
+  { children: ReactNode; entry?: boolean },
+  { failed: boolean }
+> {
+  state = { failed: false };
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+  render() {
+    return this.state.failed ? (
+      <div
+        className={
+          this.props.entry ? "kinetic-scene-fallback" : "living-table-fallback"
+        }
+        data-scene-fallback="true"
+        aria-hidden="true"
+      />
+    ) : (
+      this.props.children
+    );
+  }
+}
+
 const STORAGE_KEY = "bullshit-poker-v3-seat";
 const PREFERENCES_KEY = "bullshit-poker-v3-preferences";
+const REACTION_VISIBLE_MS = 3_000;
+const ROUND_RESULT_VISIBLE_MS = 4_500;
+const SOCKET_CONNECT_TIMEOUT_MS = 12_000;
+const HEARTBEAT_INTERVAL_MS = 15_000;
+const HEARTBEAT_TIMEOUT_MS = 10_000;
+const RECONNECT_DELAYS_MS = [0, 1_000, 2_000, 4_000, 8_000, 15_000] as const;
 
 type Preferences = {
   sound: boolean;
@@ -90,11 +123,22 @@ const DEFAULT_PREFERENCES: Preferences = {
 
 function loadPreferences(): Preferences {
   try {
+    const saved = JSON.parse(
+      localStorage.getItem(PREFERENCES_KEY) ?? "{}",
+    ) as Partial<Preferences>;
     return {
-      ...DEFAULT_PREFERENCES,
-      ...(JSON.parse(
-        localStorage.getItem(PREFERENCES_KEY) ?? "{}",
-      ) as Partial<Preferences>),
+      sound:
+        typeof saved.sound === "boolean"
+          ? saved.sound
+          : DEFAULT_PREFERENCES.sound,
+      haptics:
+        typeof saved.haptics === "boolean"
+          ? saved.haptics
+          : DEFAULT_PREFERENCES.haptics,
+      reducedEffects:
+        typeof saved.reducedEffects === "boolean"
+          ? saved.reducedEffects
+          : DEFAULT_PREFERENCES.reducedEffects,
     };
   } catch {
     return DEFAULT_PREFERENCES;
@@ -102,12 +146,34 @@ function loadPreferences(): Preferences {
 }
 
 function persistPreferences(preferences: Preferences): void {
-  localStorage.setItem(PREFERENCES_KEY, JSON.stringify(preferences));
+  try {
+    localStorage.setItem(PREFERENCES_KEY, JSON.stringify(preferences));
+  } catch {
+    // Preferences are enhancement-only when storage is unavailable.
+  }
 }
 
-type ConnectionStatus = "idle" | "connecting" | "open" | "closed" | "error";
+type ConnectionStatus =
+  | "idle"
+  | "connecting"
+  | "open"
+  | "reconnecting"
+  | "offline";
 type EntryMode = "create" | "join";
 type RoomCodeCopyState = "idle" | "copied" | "selected";
+type ActiveOverlay =
+  | "claim"
+  | "last-round"
+  | "leave"
+  | "end-game"
+  | "share"
+  | "settings"
+  | "reactions"
+  | null;
+type PendingMutation = {
+  requestId: string;
+  stateRevision: number;
+};
 
 function requestId(prefix: string): string {
   return `${prefix}:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`;
@@ -127,17 +193,13 @@ function connectionLabel(status: ConnectionStatus): string {
       return "Connecting";
     case "open":
       return "Live";
-    case "closed":
+    case "reconnecting":
+      return "Reconnecting";
+    case "offline":
       return "Offline";
-    case "error":
-      return "Connection issue";
     case "idle":
       return "Not connected";
   }
-}
-
-function canReconnect(status: ConnectionStatus): boolean {
-  return status === "closed" || status === "error" || status === "idle";
 }
 
 function playSignalTone(frequency: number): void {
@@ -220,20 +282,77 @@ function selectVisibleRoomCode(): boolean {
 }
 
 function saveCredential(credential: SeatCredential): void {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(credential));
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(credential));
+  } catch {
+    // The current tab still owns the live credential when storage is blocked.
+  }
 }
 
 function loadCredential(): SeatCredential | null {
   try {
     const value = localStorage.getItem(STORAGE_KEY);
-    return value ? (JSON.parse(value) as SeatCredential) : null;
+    if (!value) return null;
+    const parsed = JSON.parse(value) as Partial<SeatCredential>;
+    if (
+      typeof parsed.code !== "string" ||
+      !/^[A-Z0-9]{6}$/.test(parsed.code) ||
+      typeof parsed.playerId !== "string" ||
+      parsed.playerId.length === 0 ||
+      typeof parsed.reconnectToken !== "string" ||
+      parsed.reconnectToken.length === 0 ||
+      typeof parsed.name !== "string"
+    ) {
+      return null;
+    }
+    return parsed as SeatCredential;
   } catch {
     return null;
   }
 }
 
-function removeCredential(): void {
-  localStorage.removeItem(STORAGE_KEY);
+function removeCredential(ownedCredential: SeatCredential | null): void {
+  try {
+    if (
+      ownedCredential &&
+      loadCredential()?.reconnectToken === ownedCredential.reconnectToken
+    ) {
+      localStorage.removeItem(STORAGE_KEY);
+    }
+  } catch {
+    // An in-memory reset is still sufficient for this tab.
+  }
+}
+
+function friendlyError(code: string): string {
+  const messages: Record<string, string> = {
+    ROOM_NOT_FOUND: "That room could not be found.",
+    ROOM_FULL: "That table is full.",
+    NOT_ENOUGH_PLAYERS: "At least two players are needed to start.",
+    GAME_ALREADY_STARTED: "That game has already started.",
+    NAME_TAKEN: "That player name is already seated.",
+    PIN_REQUIRED: "Enter your four-digit PIN.",
+    INVALID_PIN_FORMAT: "The PIN must contain exactly four digits.",
+    PIN_MISMATCH: "That name and PIN do not match.",
+    NOT_HOST: "Only the host can do that.",
+    NOT_READY: "Every connected human player must be ready.",
+    NOT_CURRENT_TURN: "The turn changed before that action arrived.",
+    PLAYER_ELIMINATED: "Eliminated players can only observe the table.",
+    PLAYER_LEFT_MATCH: "You already left this match.",
+    MATCH_CHANGED: "The table has moved to a different match.",
+    NO_CURRENT_CLAIM: "There is no claim to challenge.",
+    CLAIM_NOT_HIGHER: "Choose a claim that is strictly higher.",
+    STALE_TURN: "The turn changed before that action arrived.",
+    STALE_STATE_REVISION: "The table changed. Your view is now up to date.",
+    STALE_CLAIM_WINDOW: "That claim is no longer open for a challenge.",
+    CLAIM_WINDOW_CLOSED: "Another action already closed that claim.",
+    CLAIMANT_CANNOT_CALL: "You cannot call BullShit on your own claim.",
+    ROUND_ALREADY_RESOLVED: "That round has already finished.",
+    REACTION_RATE_LIMITED: "Give the table a moment before reacting again.",
+    ROOM_CLOSED: "That room is no longer available.",
+    INTERNAL_ERROR: "The table could not complete that action. Try again.",
+  };
+  return messages[code] ?? code.replaceAll("_", " ").toLowerCase();
 }
 
 type OkLifecycleWireResult = Extract<LifecycleWireResult, { ok: true }>;
@@ -249,17 +368,24 @@ export function App() {
   const sharedRoomCode = new URLSearchParams(window.location.search).get(
     "room",
   );
+  const normalizedSharedRoomCode = normalizedCode(sharedRoomCode ?? "");
   const [entryMode, setEntryMode] = useState<EntryMode>(
     sharedRoomCode ? "join" : "create",
   );
   const [displayName, setDisplayName] = useState("");
   const [pin, setPin] = useState("");
-  const [roomCode, setRoomCode] = useState(() =>
-    normalizedCode(sharedRoomCode ?? ""),
-  );
-  const [credential, setCredential] = useState<SeatCredential | null>(() =>
-    loadCredential(),
-  );
+  const [roomCode, setRoomCode] = useState(() => normalizedSharedRoomCode);
+  const [credential, setCredential] = useState<SeatCredential | null>(() => {
+    const saved = loadCredential();
+    if (
+      saved &&
+      normalizedSharedRoomCode &&
+      saved.code !== normalizedSharedRoomCode
+    ) {
+      return null;
+    }
+    return saved;
+  });
   const [view, setView] = useState<PrivateGameView | null>(null);
   const [connectionStatus, setConnectionStatus] =
     useState<ConnectionStatus>("idle");
@@ -267,39 +393,123 @@ export function App() {
   const [notice, setNotice] = useState<string>("");
   const [roomCodeCopyState, setRoomCodeCopyState] =
     useState<RoomCodeCopyState>("idle");
-  const [claimPickerOpen, setClaimPickerOpen] = useState(false);
-  const [lastRoundOpen, setLastRoundOpen] = useState(false);
-  const [leaveOpen, setLeaveOpen] = useState(false);
+  const [activeOverlay, setActiveOverlay] = useState<ActiveOverlay>(null);
   const [leavePending, setLeavePending] = useState(false);
-  const [endGameOpen, setEndGameOpen] = useState(false);
-  const [shareOpen, setShareOpen] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [reactionOpen, setReactionOpen] = useState(false);
+  const [pendingMutation, setPendingMutation] =
+    useState<PendingMutation | null>(null);
+  const [visibleReaction, setVisibleReaction] = useState<ReactionEvent | null>(
+    null,
+  );
+  const [visibleRoundResult, setVisibleRoundResult] =
+    useState<RoundResult | null>(null);
   const [preferences, setPreferences] = useState<Preferences>(loadPreferences);
   const socketRef = useRef<WebSocket | null>(null);
   const socketGenerationRef = useRef(0);
+  const acceptedGenerationRef = useRef<number | null>(null);
   const latestViewRef = useRef<PrivateGameView | null>(null);
+  const credentialRef = useRef<SeatCredential | null>(credential);
+  const preferencesRef = useRef(preferences);
   const entryRequestPendingRef = useRef(false);
-  const autoReconnectKeyRef = useRef<string | null>(null);
   const leaveRequestIdRef = useRef<string | null>(null);
+  const leaveMatchIdRef = useRef<string | null>(null);
+  const pendingMutationRef = useRef<PendingMutation | null>(null);
   const historyGuardRef = useRef(false);
-  const lastRoundResultIdRef = useRef<string | null>(null);
+  const mountedRef = useRef(false);
+  const reconnectAllowedRef = useRef(Boolean(credential));
+  const reconnectAttemptRef = useRef(0);
+  const reconnectTimerRef = useRef<number | undefined>(undefined);
+  const connectTimeoutRef = useRef<number | undefined>(undefined);
+  const heartbeatTimerRef = useRef<number | undefined>(undefined);
+  const pendingHeartbeatRef = useRef<
+    | {
+        requestId: string;
+        sentAt: number;
+      }
+    | undefined
+  >(undefined);
+  const connectLiveRef = useRef<(credential: SeatCredential) => void>(
+    () => undefined,
+  );
+  const scheduleReconnectRef = useRef<(immediate?: boolean) => void>(
+    () => undefined,
+  );
   const isInRoom = view !== null;
+  const tableInteractive =
+    connectionStatus === "open" && !pendingMutation && !leavePending;
   const hapticsAvailable = supportsHaptics();
 
-  useEffect(() => {
-    return () => {
-      socketGenerationRef.current += 1;
-      socketRef.current?.close();
-    };
+  const clearReconnectTimer = useCallback(() => {
+    if (reconnectTimerRef.current !== undefined) {
+      window.clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = undefined;
+    }
   }, []);
 
+  const clearSocketHealthTimers = useCallback(() => {
+    if (connectTimeoutRef.current !== undefined) {
+      window.clearTimeout(connectTimeoutRef.current);
+      connectTimeoutRef.current = undefined;
+    }
+    if (heartbeatTimerRef.current !== undefined) {
+      window.clearInterval(heartbeatTimerRef.current);
+      heartbeatTimerRef.current = undefined;
+    }
+    pendingHeartbeatRef.current = undefined;
+  }, []);
+
+  const clearPendingMutation = useCallback(() => {
+    pendingMutationRef.current = null;
+    setPendingMutation(null);
+  }, []);
+
+  const beginMutation = useCallback(
+    (requestIdValue: string, stateRevision: number) => {
+      const pending = { requestId: requestIdValue, stateRevision };
+      pendingMutationRef.current = pending;
+      setPendingMutation(pending);
+    },
+    [],
+  );
+
   useEffect(() => {
+    preferencesRef.current = preferences;
     persistPreferences(preferences);
     document.documentElement.dataset.reducedEffects = preferences.reducedEffects
       ? "true"
       : "false";
   }, [preferences]);
+
+  useEffect(() => {
+    const reactionId = visibleReaction?.id;
+    if (!reactionId) return;
+    const timer = window.setTimeout(() => {
+      setVisibleReaction((current) =>
+        current?.id === reactionId ? null : current,
+      );
+    }, REACTION_VISIBLE_MS);
+    return () => window.clearTimeout(timer);
+  }, [visibleReaction?.id]);
+
+  useEffect(() => {
+    const resultId = visibleRoundResult?.id;
+    if (!resultId) return;
+    const timer = window.setTimeout(() => {
+      setVisibleRoundResult((current) =>
+        current?.id === resultId ? null : current,
+      );
+    }, ROUND_RESULT_VISIBLE_MS);
+    playHaptic(preferencesRef.current.haptics, [18, 35, 28]);
+    if (preferencesRef.current.sound) {
+      playSignalTone(visibleRoundResult.claimWasTrue ? 520 : 220);
+    }
+    return () => window.clearTimeout(timer);
+  }, [visibleRoundResult?.id]);
+
+  useEffect(() => {
+    if (!notice || !view || leavePending) return;
+    const timer = window.setTimeout(() => setNotice(""), 5_000);
+    return () => window.clearTimeout(timer);
+  }, [leavePending, notice, view]);
 
   useEffect(() => {
     if (!isInRoom || historyGuardRef.current) return;
@@ -310,7 +520,7 @@ export function App() {
       window.location.href,
     );
     const handlePopState = () => {
-      setLeaveOpen(true);
+      setActiveOverlay("leave");
       window.history.pushState(
         { bullshitPokerV3: true },
         "",
@@ -325,54 +535,199 @@ export function App() {
   }, [isInRoom]);
 
   useEffect(() => {
-    const resultId = view?.lastRoundResult?.id;
-    if (!resultId || lastRoundResultIdRef.current === resultId) return;
-    lastRoundResultIdRef.current = resultId;
-    playHaptic(preferences.haptics, [18, 35, 28]);
-    if (preferences.sound)
-      playSignalTone(view.lastRoundResult?.claimWasTrue ? 520 : 220);
-  }, [preferences.haptics, preferences.sound, view?.lastRoundResult]);
-
-  const acceptView = useCallback((nextView: PrivateGameView): boolean => {
-    const currentView = latestViewRef.current;
-    if (currentView?.roomId === nextView.roomId) {
-      if (nextView.stateRevision < currentView.stateRevision) return false;
-      if (
-        nextView.stateRevision === currentView.stateRevision &&
-        (nextView.socialRevision ?? 0) < (currentView.socialRevision ?? 0)
-      ) {
-        return false;
+    if (!activeOverlay) return;
+    const previousFocus = document.activeElement as HTMLElement | null;
+    const selector =
+      activeOverlay === "reactions" ? ".reaction-dock" : ".sheet-backdrop";
+    const frame = window.requestAnimationFrame(() => {
+      document
+        .querySelector<HTMLElement>(`${selector} button:not(:disabled)`)
+        ?.focus();
+    });
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !leavePending) {
+        event.preventDefault();
+        setActiveOverlay(null);
+        return;
       }
-    }
-    visualEventBus.publish(deriveVisualEvents(currentView, nextView));
-    latestViewRef.current = nextView;
-    setView(nextView);
-    return true;
-  }, []);
+      if (event.key !== "Tab") return;
+      const root = document.querySelector<HTMLElement>(selector);
+      const controls = [
+        ...(root?.querySelectorAll<HTMLElement>(
+          'button:not(:disabled), input:not(:disabled), select:not(:disabled), [tabindex]:not([tabindex="-1"])',
+        ) ?? []),
+      ];
+      if (controls.length === 0) return;
+      const first = controls[0];
+      const last = controls.at(-1)!;
+      if (!root?.contains(document.activeElement)) {
+        event.preventDefault();
+        first.focus();
+      } else if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    const background = [
+      ...document.querySelectorAll<HTMLElement>(".app-shell > *"),
+    ].filter((element) => !element.matches(selector));
+    const inertStates = background.map((element) => element.inert);
+    background.forEach((element) => {
+      element.inert = true;
+    });
+    document.body.dataset.overlayOpen = "true";
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      document.removeEventListener("keydown", handleKeyDown);
+      delete document.body.dataset.overlayOpen;
+      background.forEach((element, index) => {
+        element.inert = inertStates[index];
+      });
+      if (previousFocus?.isConnected) previousFocus.focus();
+    };
+  }, [activeOverlay, leavePending]);
 
-  const clearSeatSession = useCallback((nextNotice = ""): void => {
-    socketGenerationRef.current += 1;
-    const socket = socketRef.current;
-    socketRef.current = null;
-    socket?.close();
-    autoReconnectKeyRef.current = null;
-    latestViewRef.current = null;
-    visualEventBus.reset();
-    removeCredential();
-    setCredential(null);
-    setView(null);
-    setConnectionStatus("idle");
-    setLeavePending(false);
-    setLeaveOpen(false);
-    leaveRequestIdRef.current = null;
-    setNotice(nextNotice);
-  }, []);
+  useEffect(() => {
+    if (!view) {
+      setActiveOverlay(null);
+      return;
+    }
+    if (
+      activeOverlay === "claim" &&
+      (!view.canViewerAct || view.phase !== "RoundActive" || !tableInteractive)
+    ) {
+      setActiveOverlay(null);
+    } else if (activeOverlay === "last-round" && !view.lastRoundResult) {
+      setActiveOverlay(null);
+    } else if (
+      activeOverlay === "end-game" &&
+      (!view.isViewerHost || view.phase === "GameOver" || !tableInteractive)
+    ) {
+      setActiveOverlay(null);
+    } else if (activeOverlay === "reactions" && !tableInteractive) {
+      setActiveOverlay(null);
+    }
+  }, [activeOverlay, tableInteractive, view]);
+
+  const acceptView = useCallback(
+    (nextView: PrivateGameView, synchronize = false): boolean => {
+      const currentView = latestViewRef.current;
+      if (currentView?.roomId === nextView.roomId) {
+        if (nextView.stateRevision < currentView.stateRevision) return false;
+        if (
+          nextView.stateRevision === currentView.stateRevision &&
+          (nextView.socialRevision ?? 0) < (currentView.socialRevision ?? 0)
+        ) {
+          return false;
+        }
+      }
+      const events = deriveVisualEvents(
+        synchronize ? null : currentView,
+        nextView,
+      );
+      if (currentView && currentView.matchId !== nextView.matchId) {
+        setActiveOverlay(null);
+      } else if (
+        currentView &&
+        (synchronize ||
+          currentView.roundNumber !== nextView.roundNumber ||
+          currentView.currentTurnId !== nextView.currentTurnId ||
+          currentView.activeClaimWindow?.id !== nextView.activeClaimWindow?.id)
+      ) {
+        setActiveOverlay((current) => (current === "claim" ? null : current));
+      }
+      if (synchronize || currentView?.matchId !== nextView.matchId) {
+        setVisibleReaction(null);
+        setVisibleRoundResult(null);
+        visualEventBus.reset();
+      }
+      for (const event of events) {
+        if (event.kind === "REACTION") {
+          setVisibleReaction(event.reaction);
+        }
+        if (event.kind === "ROUND_REVEALED" && nextView.lastRoundResult) {
+          setVisibleRoundResult(nextView.lastRoundResult);
+        }
+      }
+      latestViewRef.current = nextView;
+      setView(nextView);
+      visualEventBus.publish(events);
+      return true;
+    },
+    [],
+  );
+
+  const clearSeatSession = useCallback(
+    (nextNotice = "", keepSavedSeat = false): void => {
+      reconnectAllowedRef.current = false;
+      clearReconnectTimer();
+      clearSocketHealthTimers();
+      socketGenerationRef.current += 1;
+      acceptedGenerationRef.current = null;
+      const ownedCredential = credentialRef.current;
+      credentialRef.current = null;
+      const socket = socketRef.current;
+      socketRef.current = null;
+      socket?.close();
+      latestViewRef.current = null;
+      visualEventBus.reset();
+      if (!keepSavedSeat) removeCredential(ownedCredential);
+      setCredential(null);
+      setView(null);
+      setConnectionStatus("idle");
+      setLeavePending(false);
+      setActiveOverlay(null);
+      setVisibleReaction(null);
+      setVisibleRoundResult(null);
+      clearPendingMutation();
+      leaveRequestIdRef.current = null;
+      leaveMatchIdRef.current = null;
+      setNotice(nextNotice);
+    },
+    [clearPendingMutation, clearReconnectTimer, clearSocketHealthTimers],
+  );
 
   const handleServerMessage = useCallback(
     (message: RoomServerMessage, generation: number): void => {
       if (generation !== socketGenerationRef.current) return;
+      pendingHeartbeatRef.current = undefined;
+      if (message.type === "PONG") return;
       if (message.type === "SESSION_ACCEPTED") {
-        if (acceptView(message.view)) setNotice("");
+        acceptedGenerationRef.current = generation;
+        if (connectTimeoutRef.current !== undefined) {
+          window.clearTimeout(connectTimeoutRef.current);
+          connectTimeoutRef.current = undefined;
+        }
+        reconnectAttemptRef.current = 0;
+        setConnectionStatus("open");
+        clearPendingMutation();
+        if (acceptView(message.view, true)) setNotice("");
+        const pendingLeaveRequestId = leaveRequestIdRef.current;
+        if (
+          pendingLeaveRequestId &&
+          leaveMatchIdRef.current !== message.view.matchId
+        ) {
+          leaveRequestIdRef.current = null;
+          leaveMatchIdRef.current = null;
+          setLeavePending(false);
+          setActiveOverlay(null);
+          setNotice(
+            "The match changed while reconnecting. You are still seated.",
+          );
+        } else if (pendingLeaveRequestId && leaveMatchIdRef.current) {
+          setLeavePending(true);
+          setActiveOverlay("leave");
+          const sent = sendRoomMessage(socketRef.current, {
+            type: "LEAVE_GAME",
+            requestId: pendingLeaveRequestId,
+            matchId: leaveMatchIdRef.current,
+          });
+          if (!sent) socketRef.current?.close();
+        }
         return;
       }
       if (message.type === "SESSION_REJECTED") {
@@ -393,8 +748,9 @@ export function App() {
           );
           return;
         }
-        setNotice(message.code);
-        setConnectionStatus("error");
+        setNotice(friendlyError(message.code));
+        setConnectionStatus("reconnecting");
+        socketRef.current?.close();
         return;
       }
       if (message.type === "LEAVE_ACCEPTED") {
@@ -408,60 +764,262 @@ export function App() {
       if (message.type === "ROOM_UPDATED") {
         const accepted = acceptView(message.view);
         if (!accepted) return;
-        setNotice("");
-        if (message.roundResult) {
-          setLastRoundOpen(message.view.phase !== "GameOver");
+        const pending = pendingMutationRef.current;
+        if (pending && message.requestId === pending.requestId) {
+          clearPendingMutation();
+          setNotice("");
         }
         return;
       }
       if (message.type === "ACTION_REJECTED") {
-        setNotice(message.code);
+        if (
+          message.requestId &&
+          message.requestId === pendingMutationRef.current?.requestId
+        ) {
+          clearPendingMutation();
+        }
+        if (
+          message.requestId &&
+          message.requestId === leaveRequestIdRef.current
+        ) {
+          leaveRequestIdRef.current = null;
+          leaveMatchIdRef.current = null;
+          setLeavePending(false);
+        }
+        setNotice(friendlyError(message.code));
         if (message.view) {
           acceptView(message.view);
         }
       }
     },
-    [acceptView, clearSeatSession],
+    [acceptView, clearPendingMutation, clearSeatSession],
   );
+
+  const scheduleReconnect = useCallback(
+    (immediate = false): void => {
+      const nextCredential = credentialRef.current;
+      if (
+        !mountedRef.current ||
+        !reconnectAllowedRef.current ||
+        !nextCredential
+      ) {
+        return;
+      }
+      if (navigator.onLine === false) {
+        setConnectionStatus("offline");
+        return;
+      }
+      if (reconnectTimerRef.current !== undefined) {
+        if (!immediate) return;
+        clearReconnectTimer();
+      }
+
+      const attempt = reconnectAttemptRef.current;
+      const delay = immediate
+        ? 0
+        : RECONNECT_DELAYS_MS[
+            Math.min(attempt, RECONNECT_DELAYS_MS.length - 1)
+          ];
+      reconnectAttemptRef.current = Math.min(
+        attempt + 1,
+        RECONNECT_DELAYS_MS.length - 1,
+      );
+      reconnectTimerRef.current = window.setTimeout(() => {
+        reconnectTimerRef.current = undefined;
+        const currentCredential = credentialRef.current;
+        if (currentCredential && reconnectAllowedRef.current) {
+          connectLiveRef.current(currentCredential);
+        }
+      }, delay);
+    },
+    [clearReconnectTimer],
+  );
+  scheduleReconnectRef.current = scheduleReconnect;
 
   const connectLive = useCallback(
     (nextCredential: SeatCredential): void => {
+      if (
+        !reconnectAllowedRef.current ||
+        credentialRef.current?.reconnectToken !== nextCredential.reconnectToken
+      ) {
+        return;
+      }
+      if (navigator.onLine === false) {
+        setConnectionStatus("offline");
+        return;
+      }
+      clearReconnectTimer();
+      clearSocketHealthTimers();
+      acceptedGenerationRef.current = null;
       const generation = socketGenerationRef.current + 1;
       socketGenerationRef.current = generation;
       const priorSocket = socketRef.current;
       socketRef.current = null;
       priorSocket?.close();
 
-      const socket = connectRoomSocket(
-        nextCredential,
-        (message) => handleServerMessage(message, generation),
-        (status) => {
-          if (generation !== socketGenerationRef.current) return;
-          setConnectionStatus(status);
-          if (
-            (status === "closed" || status === "error") &&
-            leaveRequestIdRef.current
-          ) {
-            setLeavePending(false);
-            setNotice(
-              "The leave confirmation was interrupted. Reconnect and try again safely.",
-            );
-          }
-        },
+      setConnectionStatus(
+        latestViewRef.current ? "reconnecting" : "connecting",
       );
+      let socket: WebSocket;
+      try {
+        socket = connectRoomSocket(
+          nextCredential,
+          (message) => handleServerMessage(message, generation),
+          (status) => {
+            if (generation !== socketGenerationRef.current) return;
+            if (status === "replaced") {
+              clearSeatSession("Your seat is active in another tab.", true);
+              return;
+            }
+            if (status === "open") {
+              heartbeatTimerRef.current = window.setInterval(() => {
+                if (document.hidden) return;
+                const liveSocket = socketRef.current;
+                if (!liveSocket || liveSocket.readyState !== WebSocket.OPEN) {
+                  liveSocket?.close();
+                  return;
+                }
+                const pendingPing = pendingHeartbeatRef.current;
+                if (
+                  pendingPing &&
+                  Date.now() - pendingPing.sentAt >= HEARTBEAT_TIMEOUT_MS
+                ) {
+                  liveSocket.close(4001, "HEARTBEAT_TIMEOUT");
+                  return;
+                }
+                const pingRequestId = requestId("ping");
+                if (
+                  sendRoomMessage(liveSocket, {
+                    type: "PING",
+                    requestId: pingRequestId,
+                  })
+                ) {
+                  pendingHeartbeatRef.current = {
+                    requestId: pingRequestId,
+                    sentAt: Date.now(),
+                  };
+                }
+              }, HEARTBEAT_INTERVAL_MS);
+              return;
+            }
+            if (status === "error") {
+              acceptedGenerationRef.current = null;
+              setConnectionStatus("reconnecting");
+              try {
+                socket.close();
+              } catch {
+                scheduleReconnectRef.current();
+              }
+              return;
+            }
+            if (status === "closed") {
+              acceptedGenerationRef.current = null;
+              if (socketRef.current === socket) socketRef.current = null;
+              clearSocketHealthTimers();
+              setConnectionStatus(
+                navigator.onLine === false ? "offline" : "reconnecting",
+              );
+              scheduleReconnectRef.current();
+            }
+          },
+        );
+      } catch {
+        setConnectionStatus("reconnecting");
+        scheduleReconnectRef.current();
+        return;
+      }
       socketRef.current = socket;
+      connectTimeoutRef.current = window.setTimeout(() => {
+        if (
+          generation === socketGenerationRef.current &&
+          acceptedGenerationRef.current !== generation
+        ) {
+          socket.close(4002, "CONNECT_TIMEOUT");
+        }
+      }, SOCKET_CONNECT_TIMEOUT_MS);
     },
-    [handleServerMessage],
+    [
+      clearReconnectTimer,
+      clearSocketHealthTimers,
+      clearSeatSession,
+      handleServerMessage,
+    ],
   );
+  connectLiveRef.current = connectLive;
 
   useEffect(() => {
-    if (!credential || view) return;
-    const reconnectKey = `${credential.code}:${credential.playerId}:${credential.reconnectToken}`;
-    if (autoReconnectKeyRef.current === reconnectKey) return;
-    autoReconnectKeyRef.current = reconnectKey;
-    setNotice("");
-    connectLive(credential);
-  }, [connectLive, credential, view]);
+    credentialRef.current = credential;
+    reconnectAllowedRef.current = Boolean(credential);
+    reconnectAttemptRef.current = 0;
+    if (credential) scheduleReconnect(true);
+    else {
+      clearReconnectTimer();
+      clearSocketHealthTimers();
+    }
+  }, [
+    clearReconnectTimer,
+    clearSocketHealthTimers,
+    credential,
+    scheduleReconnect,
+  ]);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    reconnectAllowedRef.current = Boolean(credentialRef.current);
+    scheduleReconnectRef.current(true);
+    const handleOffline = () => {
+      if (!credentialRef.current) return;
+      acceptedGenerationRef.current = null;
+      clearReconnectTimer();
+      setConnectionStatus("offline");
+      pendingHeartbeatRef.current = undefined;
+      socketRef.current?.close(4003, "NETWORK_OFFLINE");
+    };
+    const reconnectNow = () => {
+      if (!reconnectAllowedRef.current || !credentialRef.current) return;
+      reconnectAttemptRef.current = 0;
+      scheduleReconnectRef.current(true);
+    };
+    const handleVisibility = () => {
+      if (document.hidden) {
+        pendingHeartbeatRef.current = undefined;
+        return;
+      }
+      if (socketRef.current?.readyState === WebSocket.OPEN) {
+        const pingRequestId = requestId("resume");
+        if (
+          sendRoomMessage(socketRef.current, {
+            type: "PING",
+            requestId: pingRequestId,
+          })
+        ) {
+          pendingHeartbeatRef.current = {
+            requestId: pingRequestId,
+            sentAt: Date.now(),
+          };
+        }
+      } else {
+        reconnectNow();
+      }
+    };
+
+    window.addEventListener("offline", handleOffline);
+    window.addEventListener("online", reconnectNow);
+    window.addEventListener("pageshow", reconnectNow);
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => {
+      mountedRef.current = false;
+      reconnectAllowedRef.current = false;
+      clearReconnectTimer();
+      clearSocketHealthTimers();
+      socketGenerationRef.current += 1;
+      socketRef.current?.close();
+      window.removeEventListener("offline", handleOffline);
+      window.removeEventListener("online", reconnectNow);
+      window.removeEventListener("pageshow", reconnectNow);
+      document.removeEventListener("visibilitychange", handleVisibility);
+    };
+  }, [clearReconnectTimer, clearSocketHealthTimers]);
 
   async function handleCreateRoom() {
     if (entryRequestPendingRef.current) return;
@@ -480,10 +1038,11 @@ export function App() {
       };
       saveCredential(nextCredential);
       setCredential(nextCredential);
-      acceptView(nextView);
-      connectLive(nextCredential);
+      acceptView(nextView, true);
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "CREATE_FAILED");
+      setNotice(
+        friendlyError(error instanceof Error ? error.message : "CREATE_FAILED"),
+      );
     } finally {
       entryRequestPendingRef.current = false;
       setEntryPending(false);
@@ -508,111 +1067,140 @@ export function App() {
       };
       saveCredential(nextCredential);
       setCredential(nextCredential);
-      acceptView(nextView);
-      connectLive(nextCredential);
+      acceptView(nextView, true);
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "JOIN_FAILED");
+      setNotice(
+        friendlyError(error instanceof Error ? error.message : "JOIN_FAILED"),
+      );
     } finally {
       entryRequestPendingRef.current = false;
       setEntryPending(false);
     }
   }
 
-  function handleReconnect() {
-    if (credential) {
-      setNotice("");
-      connectLive(credential);
-    }
+  function sendMutation(message: RoomClientMessage): boolean {
+    const currentView = latestViewRef.current;
+    const currentCredential = credentialRef.current;
+    if (
+      !currentView ||
+      !currentCredential ||
+      leaveRequestIdRef.current ||
+      pendingMutationRef.current ||
+      acceptedGenerationRef.current !== socketGenerationRef.current ||
+      currentView.viewerPlayerId !== currentCredential.playerId ||
+      currentView.code !== currentCredential.code
+    )
+      return false;
+    const id =
+      "envelope" in message ? message.envelope.requestId : message.requestId;
+    if (!id) return false;
+    beginMutation(id, currentView.stateRevision);
+    if (sendRoomMessage(socketRef.current, message)) return true;
+    clearPendingMutation();
+    acceptedGenerationRef.current = null;
+    setConnectionStatus("reconnecting");
+    socketRef.current?.close();
+    scheduleReconnectRef.current(true);
+    return false;
   }
 
   function requestLeave() {
-    setReactionOpen(false);
-    setSettingsOpen(false);
-    setLeaveOpen(true);
+    setActiveOverlay("leave");
   }
 
   function confirmLeave() {
-    if (!view?.matchId || leavePending) return;
-    const request = leaveRequestIdRef.current ?? requestId("leave");
+    const currentView = latestViewRef.current;
+    if (!currentView?.matchId || leaveRequestIdRef.current) return;
+    const request = requestId("leave");
     leaveRequestIdRef.current = request;
+    leaveMatchIdRef.current = currentView.matchId;
     setLeavePending(true);
-    const sent = sendRoomMessage(socketRef.current, {
-      type: "LEAVE_GAME",
-      requestId: request,
-      matchId: view.matchId,
-    });
+    const sent =
+      acceptedGenerationRef.current === socketGenerationRef.current &&
+      sendRoomMessage(socketRef.current, {
+        type: "LEAVE_GAME",
+        requestId: request,
+        matchId: currentView.matchId,
+      });
     if (!sent) {
-      setLeavePending(false);
-      setNotice("Reconnect before leaving so the table can update safely.");
+      setNotice("Reconnecting to confirm your departure…");
+      scheduleReconnectRef.current(true);
     }
   }
 
   function setReady(ready: boolean) {
-    const sent = sendRoomMessage(socketRef.current, {
-      type: "SET_READY",
-      requestId: requestId("ready"),
-      ready,
-    });
-    if (sent) playHaptic(preferences.haptics, 10);
+    if (latestViewRef.current?.phase !== "Lobby") return;
+    sendMutation({ type: "SET_READY", requestId: requestId("ready"), ready });
   }
 
   function endGame() {
-    if (!view?.matchId) return;
-    sendRoomMessage(socketRef.current, {
-      type: "END_GAME",
-      requestId: requestId("end-game"),
-      matchId: view.matchId,
-    });
-    setEndGameOpen(false);
+    const currentView = latestViewRef.current;
+    if (
+      !currentView?.matchId ||
+      !currentView.isViewerHost ||
+      currentView.phase === "GameOver"
+    )
+      return;
+    if (
+      sendMutation({
+        type: "END_GAME",
+        requestId: requestId("end-game"),
+        matchId: currentView.matchId,
+      })
+    )
+      setActiveOverlay(null);
   }
 
   function startRematch() {
-    if (!view?.matchId) return;
-    sendRoomMessage(socketRef.current, {
+    const currentView = latestViewRef.current;
+    if (
+      !currentView?.matchId ||
+      !currentView.isViewerHost ||
+      currentView.phase !== "GameOver"
+    )
+      return;
+    sendMutation({
       type: "START_REMATCH",
       requestId: requestId("rematch"),
-      matchId: view.matchId,
+      matchId: currentView.matchId,
     });
   }
 
   function sendReaction(kind: ReactionKind) {
-    const sent = sendRoomMessage(socketRef.current, {
+    sendMutation({
       type: "SEND_REACTION",
       requestId: requestId("reaction"),
       kind,
     });
-    if (sent) playHaptic(preferences.haptics, 12);
-    setReactionOpen(false);
+    setActiveOverlay(null);
   }
 
   function updatePreferences(nextPreferences: Preferences) {
-    if (!preferences.haptics && nextPreferences.haptics) {
+    if (!preferences.haptics && nextPreferences.haptics)
       playHaptic(true, [14, 24, 14]);
-    }
     setPreferences(nextPreferences);
   }
 
-  async function addBot() {
-    if (!credential || !view) return;
-    const sent = sendRoomMessage(socketRef.current, {
-      type: "ADD_BOT",
-      requestId: requestId("add-bot"),
-    });
-    if (!sent) {
-      setNotice("Reconnect to change the table.");
-    }
+  function addBot() {
+    if (
+      !latestViewRef.current?.isViewerHost ||
+      latestViewRef.current.phase !== "Lobby"
+    )
+      return;
+    sendMutation({ type: "ADD_BOT", requestId: requestId("add-bot") });
   }
 
-  async function removePlayer(targetPlayerId: string) {
-    if (!credential || !view) return;
-    const sent = sendRoomMessage(socketRef.current, {
+  function removePlayer(targetPlayerId: string) {
+    if (
+      !latestViewRef.current?.isViewerHost ||
+      latestViewRef.current.phase !== "Lobby"
+    )
+      return;
+    sendMutation({
       type: "REMOVE_PLAYER",
       requestId: requestId("remove-player"),
       targetPlayerId,
     });
-    if (!sent) {
-      setNotice("Reconnect to change the table.");
-    }
   }
 
   async function copyRoomCode() {
@@ -627,71 +1215,54 @@ export function App() {
     window.setTimeout(() => setRoomCodeCopyState("idle"), 1_500);
   }
 
-  async function startGame() {
-    if (!credential || !view) return;
-    const sent = sendRoomMessage(socketRef.current, {
-      type: "START_GAME",
-      requestId: requestId("start-game"),
-    });
-    if (!sent) {
-      setNotice("Reconnect before starting the game.");
-    } else {
-      playHaptic(preferences.haptics, [12, 20, 24]);
-    }
+  function startGame() {
+    if (
+      !latestViewRef.current?.isViewerHost ||
+      latestViewRef.current.phase !== "Lobby"
+    )
+      return;
+    sendMutation({ type: "START_GAME", requestId: requestId("start-game") });
   }
 
-  async function submitClaim(claim: ClaimTemplate) {
-    if (!credential || !view) return;
-    const envelope = {
-      requestId: requestId("claim"),
-      roomId: view.roomId,
-      playerId: credential.playerId,
-      stateRevision: view.stateRevision,
-      turnId: view.currentTurnId,
-      claimWindowId: view.activeClaimWindow?.id,
-      payload: {
-        claim,
-      },
-    };
-
-    setClaimPickerOpen(false);
-    const sent = sendRoomMessage(socketRef.current, {
+  function submitClaim(claim: ClaimTemplate) {
+    const currentView = latestViewRef.current;
+    if (!currentView?.canViewerAct || currentView.phase !== "RoundActive")
+      return;
+    const sent = sendMutation({
       type: "SUBMIT_CLAIM",
-      envelope,
+      envelope: {
+        requestId: requestId("claim"),
+        roomId: currentView.roomId,
+        playerId: currentView.viewerPlayerId,
+        stateRevision: currentView.stateRevision,
+        turnId: currentView.currentTurnId,
+        claimWindowId: currentView.activeClaimWindow?.id,
+        payload: { claim },
+      },
     });
-    if (!sent) {
-      setNotice("Reconnect before making a claim.");
-    } else {
-      playHaptic(preferences.haptics, 12);
-    }
+    if (sent) setActiveOverlay(null);
   }
 
-  async function callBullshit() {
-    if (!credential || !view?.activeClaimWindow) return;
-    const envelope = {
-      requestId: requestId("bullshit"),
-      roomId: view.roomId,
-      playerId: credential.playerId,
-      stateRevision: view.stateRevision,
-      claimWindowId: view.activeClaimWindow.id,
-      payload: {},
-    };
-
-    const sent = sendRoomMessage(socketRef.current, {
+  function callBullshit() {
+    const currentView = latestViewRef.current;
+    if (!currentView?.canViewerCallBullShit || !currentView.activeClaimWindow)
+      return;
+    sendMutation({
       type: "CALL_BULLSHIT",
-      envelope,
+      envelope: {
+        requestId: requestId("bullshit"),
+        roomId: currentView.roomId,
+        playerId: currentView.viewerPlayerId,
+        stateRevision: currentView.stateRevision,
+        claimWindowId: currentView.activeClaimWindow.id,
+        payload: {},
+      },
     });
-    if (!sent) {
-      setNotice("Reconnect before calling BullShit.");
-    } else {
-      playHaptic(preferences.haptics, [24, 28, 42]);
-    }
   }
 
   if (!view) {
     return (
       <EntryScreen
-        credential={credential}
         connectionStatus={connectionStatus}
         displayName={displayName}
         entryPending={entryPending}
@@ -701,7 +1272,6 @@ export function App() {
         roomCode={roomCode}
         onCreate={handleCreateRoom}
         onJoin={handleJoinRoom}
-        onReconnect={handleReconnect}
         onSetDisplayName={setDisplayName}
         onSetEntryMode={setEntryMode}
         onSetPin={setPin}
@@ -716,18 +1286,53 @@ export function App() {
       className={`app-shell ${view.phase === "GameOver" ? "game-over-shell" : ""} ${view.phase === "Lobby" ? "lobby-shell" : ""}`}
     >
       <TopBar
+        interactive={tableInteractive}
         canCopyRoomCode={view.phase === "Lobby"}
         roomCodeCopyState={roomCodeCopyState}
         status={connectionStatus}
         view={view}
         onCopyRoomCode={copyRoomCode}
-        onEndGame={() => setEndGameOpen(true)}
+        onEndGame={() => setActiveOverlay("end-game")}
         onLeave={requestLeave}
-        onReconnect={handleReconnect}
-        onSettings={() => setSettingsOpen(true)}
-        onShare={() => setShareOpen(true)}
+        onSettings={() => setActiveOverlay("settings")}
+        onShare={() => setActiveOverlay("share")}
       />
 
+      <div
+        className="sr-only"
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+      >
+        {connectionLabel(connectionStatus)}.{" "}
+        {view.phase === "Lobby"
+          ? "Players assembling."
+          : view.phase === "GameOver"
+            ? view.matchEndedReason === "HOST_ENDED"
+              ? "The host ended the game."
+              : `${playerName(view.players, view.winnerPlayerId)} wins.`
+            : `Round ${view.roundNumber}. ${playerName(view.players, view.currentTurnPlayerId)}'s turn. ${view.currentClaim ? formatClaim(view.currentClaim) : "No claim yet."}`}
+      </div>
+      {visibleRoundResult && (
+        <div className="round-result-notice" role="status" aria-live="polite">
+          <strong>
+            Round {visibleRoundResult.roundNumber}:{" "}
+            {visibleRoundResult.claimWasTrue === undefined
+              ? "Complete"
+              : visibleRoundResult.claimWasTrue
+                ? "True claim"
+                : "False claim"}
+          </strong>
+          <span>
+            {visibleRoundResult.penaltyPlayerId
+              ? `${playerName(view.players, visibleRoundResult.penaltyPlayerId)} takes the penalty card.`
+              : "No penalty."}
+            {visibleRoundResult.eliminatedPlayerIds.length > 0
+              ? ` ${visibleRoundResult.eliminatedPlayerIds.map((id) => playerName(view.players, id)).join(", ")} eliminated.`
+              : ""}
+          </span>
+        </div>
+      )}
       {notice && (
         <div className="toast" role="status">
           <CircleAlert size={16} />
@@ -737,8 +1342,10 @@ export function App() {
 
       {view.phase === "Lobby" ? (
         <Lobby
+          interactive={tableInteractive}
           reducedEffects={preferences.reducedEffects}
           view={view}
+          onShare={() => setActiveOverlay("share")}
           onAddBot={addBot}
           onRemovePlayer={removePlayer}
           onSetReady={setReady}
@@ -746,73 +1353,81 @@ export function App() {
         />
       ) : view.phase === "GameOver" ? (
         <WinnerExitPage
+          interactive={tableInteractive}
           reducedEffects={preferences.reducedEffects}
           view={view}
           onExit={requestLeave}
-          onOpenLastRound={() => setLastRoundOpen(true)}
+          onOpenLastRound={() => setActiveOverlay("last-round")}
           onRematch={startRematch}
         />
       ) : (
         <GameTable
+          interactive={tableInteractive}
+          reaction={visibleReaction}
           reducedEffects={preferences.reducedEffects}
           view={view}
           onCallBullshit={callBullshit}
-          onOpenClaimPicker={() => setClaimPickerOpen(true)}
-          onOpenLastRound={() => setLastRoundOpen(true)}
-          onOpenReactions={() => setReactionOpen((open) => !open)}
+          onOpenClaimPicker={() => setActiveOverlay("claim")}
+          onOpenLastRound={() => setActiveOverlay("last-round")}
+          onOpenReactions={() =>
+            setActiveOverlay((current) =>
+              current === "reactions" ? null : "reactions",
+            )
+          }
         />
       )}
 
-      {claimPickerOpen && (
+      {activeOverlay === "claim" && (
         <ClaimPicker
           view={view}
-          onClose={() => setClaimPickerOpen(false)}
+          onClose={() => setActiveOverlay(null)}
           onSubmit={submitClaim}
         />
       )}
 
-      {lastRoundOpen && view.lastRoundResult && (
-        <LastRoundSheet view={view} onClose={() => setLastRoundOpen(false)} />
+      {activeOverlay === "last-round" && view.lastRoundResult && (
+        <LastRoundSheet view={view} onClose={() => setActiveOverlay(null)} />
       )}
 
-      {reactionOpen && (
+      {activeOverlay === "reactions" && (
         <ReactionDock
-          onClose={() => setReactionOpen(false)}
+          onClose={() => setActiveOverlay(null)}
           onReact={sendReaction}
         />
       )}
 
-      {shareOpen && (
-        <ShareSheet view={view} onClose={() => setShareOpen(false)} />
+      {activeOverlay === "share" && (
+        <ShareSheet view={view} onClose={() => setActiveOverlay(null)} />
       )}
 
-      {settingsOpen && (
+      {activeOverlay === "settings" && (
         <SettingsSheet
           hapticsAvailable={hapticsAvailable}
           preferences={preferences}
           onChange={updatePreferences}
-          onClose={() => setSettingsOpen(false)}
+          onClose={() => setActiveOverlay(null)}
         />
       )}
 
-      {leaveOpen && (
+      {activeOverlay === "leave" && (
         <ConfirmDialog
           busy={leavePending}
           confirmLabel="Yes, leave"
           description="Your departure is permanent for this match. The table will continue for everyone else."
           title="Do you want to leave the game?"
-          onCancel={() => !leavePending && setLeaveOpen(false)}
+          onCancel={() => !leavePending && setActiveOverlay(null)}
           onConfirm={confirmLeave}
         />
       )}
 
-      {endGameOpen && (
+      {activeOverlay === "end-game" && (
         <ConfirmDialog
           confirmLabel="Yes, end game"
           description="The current match will end for every player. This cannot be undone."
           title="End this game for everyone?"
+          confirmDisabled={!tableInteractive}
           tone="danger"
-          onCancel={() => setEndGameOpen(false)}
+          onCancel={() => setActiveOverlay(null)}
           onConfirm={endGame}
         />
       )}
@@ -821,6 +1436,7 @@ export function App() {
 }
 
 function WinnerExitPage(props: {
+  interactive: boolean;
   reducedEffects: boolean;
   view: PrivateGameView;
   onExit: () => void;
@@ -840,13 +1456,15 @@ function WinnerExitPage(props: {
 
   return (
     <main className="winner-layout">
-      <Suspense fallback={null}>
-        <LivingTableScene
-          reducedEffects={props.reducedEffects}
-          variant="game"
-          view={props.view}
-        />
-      </Suspense>
+      <SceneBoundary>
+        <Suspense fallback={null}>
+          <LivingTableScene
+            reducedEffects={props.reducedEffects}
+            variant="game"
+            view={props.view}
+          />
+        </Suspense>
+      </SceneBoundary>
       <section className="winner-hero" aria-label="Game over">
         <div className="winner-trophy">
           <span className="winner-orbit" aria-hidden="true" />
@@ -880,6 +1498,7 @@ function WinnerExitPage(props: {
           {props.view.isViewerHost && (
             <button
               className="primary-action compact"
+              disabled={!props.interactive}
               onClick={props.onRematch}
             >
               <RotateCcw size={18} />
@@ -929,7 +1548,6 @@ function WinnerExitPage(props: {
 }
 
 function EntryScreen(props: {
-  credential: SeatCredential | null;
   connectionStatus: ConnectionStatus;
   displayName: string;
   entryPending: boolean;
@@ -940,7 +1558,6 @@ function EntryScreen(props: {
   roomCode: string;
   onCreate: () => void;
   onJoin: () => void;
-  onReconnect: () => void;
   onSetDisplayName: (value: string) => void;
   onSetEntryMode: (value: EntryMode) => void;
   onSetPin: (value: string) => void;
@@ -1058,78 +1675,104 @@ function EntryScreen(props: {
     props.entryMode === "create" ? "Create Room" : "Join Room";
 
   return (
-    <main className="entry-shell">
-      <Suspense
-        fallback={<div className="kinetic-scene-fallback" aria-hidden="true" />}
-      >
-        <KineticScene reducedEffects={props.reducedEffects} />
-      </Suspense>
-      <section className="launch-brand" aria-labelledby="game-title">
-        <span className="launch-kicker">
-          <span aria-hidden="true" />
-          Live deception protocol
-        </span>
-        <h1 id="game-title">
-          <span>BullShit</span> Poker
-        </h1>
-        <p>Make truth expensive.</p>
-        <div className="launch-coordinate" aria-hidden="true">
-          <span>NO TELLS</span>
-          <span>ONE TABLE</span>
-          <span>ALL NERVE</span>
+    <main className="entry-shell classic-entry" data-deal-open={railOpen}>
+      <div className="entry-edge-cards" aria-hidden="true">
+        {[
+          ["A", "♦"],
+          ["K", "♠"],
+          ["Q", "♥"],
+          ["J", "♣"],
+        ].map(([rank, suit], index) => (
+          <div
+            className={`entry-edge-card edge-${index} ${index % 2 === 0 ? "red" : ""}`}
+            key={rank}
+          >
+            <span>
+              {rank}
+              <small>{suit}</small>
+            </span>
+            <strong>{suit}</strong>
+          </div>
+        ))}
+      </div>
+      <div className="entry-artwork">
+        <div className="entry-scene-stage">
+          <SceneBoundary entry>
+            <Suspense
+              fallback={
+                <div className="kinetic-scene-fallback" aria-hidden="true" />
+              }
+            >
+              <KineticScene reducedEffects={props.reducedEffects} />
+            </Suspense>
+          </SceneBoundary>
         </div>
-      </section>
-
-      {!railOpen && (
-        <section
-          className="deal-launch-actions"
-          aria-label="Choose how to play"
-        >
-          <button
-            className="deal-mode-action create"
-            onClick={() => openRail("create")}
-          >
-            <span className="deal-mode-index" aria-hidden="true">
-              01
-            </span>
-            <span className="deal-mode-icon" aria-hidden="true">
-              <Plus size={22} />
-            </span>
-            <span>
-              <small>Open a new signal</small>
-              <strong>Create Table</strong>
-            </span>
-            <ArrowRight size={20} aria-hidden="true" />
-          </button>
-          <button
-            className="deal-mode-action join"
-            onClick={() => openRail("join")}
-          >
-            <span className="deal-mode-index" aria-hidden="true">
-              02
-            </span>
-            <span className="deal-mode-icon" aria-hidden="true">
-              <LogIn size={21} />
-            </span>
-            <span>
-              <small>Lock onto a room</small>
-              <strong>Join Room</strong>
-            </span>
-            <ArrowRight size={20} aria-hidden="true" />
-          </button>
-          {props.credential && (
-            <button className="deal-reconnect" onClick={props.onReconnect}>
-              <RefreshCw size={17} />
-              Reconnect to {props.credential.code}
-            </button>
-          )}
-          {props.notice && (
-            <div className="deal-entry-notice" role="alert">
-              {props.notice}
-            </div>
-          )}
+      </div>
+      <div className="entry-copy">
+        <section className="launch-brand" aria-labelledby="game-title">
+          <span className="launch-kicker">
+            <span aria-hidden="true" />
+            Live social bluffing
+          </span>
+          <h1 id="game-title">
+            <span>BullShit</span> Poker
+          </h1>
+          <p>The table remembers. Bluff accordingly.</p>
         </section>
-      )}
+
+        {!railOpen && (
+          <section
+            className="deal-launch-actions"
+            aria-label="Choose how to play"
+          >
+            <button
+              className="deal-mode-action create"
+              onClick={() => openRail("create")}
+            >
+              <span className="deal-mode-index" aria-hidden="true">
+                01
+              </span>
+              <span className="deal-mode-icon" aria-hidden="true">
+                <Plus size={22} />
+              </span>
+              <span>
+                <small>Start fresh</small>
+                <strong>Create Table</strong>
+              </span>
+              <ArrowRight size={20} aria-hidden="true" />
+            </button>
+            <button
+              className="deal-mode-action join"
+              onClick={() => openRail("join")}
+            >
+              <span className="deal-mode-index" aria-hidden="true">
+                02
+              </span>
+              <span className="deal-mode-icon" aria-hidden="true">
+                <LogIn size={21} />
+              </span>
+              <span>
+                <small>Lock onto a room</small>
+                <strong>Join Room</strong>
+              </span>
+              <ArrowRight size={20} aria-hidden="true" />
+            </button>
+            {props.connectionStatus !== "idle" && (
+              <div
+                className={`connection-pill ${props.connectionStatus}`}
+                role="status"
+              >
+                {connectionLabel(props.connectionStatus)}
+              </div>
+            )}
+            {props.notice && (
+              <div className="deal-entry-notice" role="alert">
+                {props.notice}
+              </div>
+            )}
+          </section>
+        )}
+      </div>
 
       {railOpen && (
         <section className="deal-rail" aria-label="Deal in">
@@ -1214,15 +1857,6 @@ function EntryScreen(props: {
                 ? "Have a room code? Join instead"
                 : "Need a table? Create one"}
             </button>
-            {props.credential && (
-              <button
-                className="deal-rail-reconnect"
-                onClick={props.onReconnect}
-              >
-                <RefreshCw size={15} />
-                Reconnect {props.credential.code}
-              </button>
-            )}
           </footer>
 
           {(props.notice || props.connectionStatus !== "idle") && (
@@ -1242,6 +1876,7 @@ function EntryScreen(props: {
 }
 
 function TopBar(props: {
+  interactive: boolean;
   canCopyRoomCode: boolean;
   roomCodeCopyState: RoomCodeCopyState;
   status: ConnectionStatus;
@@ -1249,7 +1884,6 @@ function TopBar(props: {
   onCopyRoomCode: () => void;
   onEndGame: () => void;
   onLeave: () => void;
-  onReconnect: () => void;
   onSettings: () => void;
   onShare: () => void;
 }) {
@@ -1268,11 +1902,9 @@ function TopBar(props: {
         ? "Code selected"
         : "Copy room code";
 
-  const needsReconnect = canReconnect(props.status);
-
   return (
     <header
-      className={`top-bar ${props.view.phase === "Lobby" ? "lobby-top-bar" : ""} ${needsReconnect ? "needs-reconnect" : ""}`}
+      className={`top-bar ${props.view.phase === "Lobby" ? "lobby-top-bar" : ""}`}
     >
       <div className="room-code-block">
         <div className="room-meta-row">
@@ -1309,24 +1941,16 @@ function TopBar(props: {
         </div>
       </div>
       <div className="top-actions">
-        {needsReconnect && (
+        {props.view.phase !== "Lobby" && (
           <button
-            className="icon-button reconnect-action"
-            aria-label="Reconnect"
-            title="Reconnect"
-            onClick={props.onReconnect}
+            className="icon-button"
+            aria-label="Share room"
+            title="Share room"
+            onClick={props.onShare}
           >
-            <RefreshCw size={17} />
+            <Share2 size={17} />
           </button>
         )}
-        <button
-          className="icon-button"
-          aria-label="Share room"
-          title="Share room"
-          onClick={props.onShare}
-        >
-          <Share2 size={17} />
-        </button>
         <button
           className="icon-button"
           aria-label="Table settings"
@@ -1340,6 +1964,7 @@ function TopBar(props: {
             className="icon-button danger-icon"
             aria-label="End game"
             title="End game"
+            disabled={!props.interactive}
             onClick={props.onEndGame}
           >
             <Flag size={17} />
@@ -1381,22 +2006,11 @@ function currentRoundCardTotal(view: PrivateGameView): number {
     .reduce((total, player) => total + player.cardCount, 0);
 }
 
-const LOBBY_ORBIT_SLOTS: Record<number, readonly number[]> = {
-  1: [1],
-  2: [1, 6],
-  3: [1, 4, 8],
-  4: [2, 4, 7, 9],
-  5: [1, 3, 5, 7, 9],
-  6: [1, 3, 5, 6, 8, 10],
-  7: [1, 2, 4, 5, 6, 8, 10],
-  8: [1, 2, 3, 4, 6, 7, 8, 10],
-  9: [1, 2, 3, 4, 5, 6, 7, 8, 9],
-  10: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
-};
-
 function Lobby(props: {
+  interactive: boolean;
   reducedEffects: boolean;
   view: PrivateGameView;
+  onShare: () => void;
   onAddBot: () => void;
   onRemovePlayer: (targetPlayerId: string) => void;
   onSetReady: (ready: boolean) => void;
@@ -1431,30 +2045,33 @@ function Lobby(props: {
           ? `Waiting on ${waitingPlayers[0].name}`
           : `Waiting on ${waitingPlayers.length} players`;
   const tableLabel = canStart
-    ? "Table locked"
+    ? "Ready to deal"
     : seatedCount < 2
       ? "Open table"
       : "Players assembling";
-  const occupiedSlots = LOBBY_ORBIT_SLOTS[seatedCount] ?? [];
-  const openSeats = Array.from(
-    { length: MAX_PLAYERS },
-    (_, index) => index + 1,
-  ).filter((slot) => !occupiedSlots.includes(slot));
-  const crowdedOrbit = seatedCount > 6;
 
   return (
     <main
-      className={`lobby-layout bluff-lobby seats-${seatedCount} ${crowdedOrbit ? "crowded" : ""}`}
+      className="lobby-layout bluff-lobby"
+      data-ready={canStart}
+      data-player-count={seatedCount}
     >
       <h2 className="sr-only">Lobby</h2>
 
       <section className="lobby-world" aria-label="Lobby table">
         <aside className="lobby-story">
-          <span className="section-kicker">Seat sync</span>
-          <h3>The room is assembling.</h3>
-          <p>One signal per player. No tells yet.</p>
+          <span className="section-kicker">Table assembling</span>
+          <h3>Every seat has a tell.</h3>
+          <button className="lobby-invite" onClick={props.onShare}>
+            <Share2 size={17} aria-hidden="true" /> Invite friends{" "}
+            <ArrowRight size={17} aria-hidden="true" />
+          </button>
           <div className="lobby-ready-progress">
-            <span aria-hidden="true" />
+            <progress
+              aria-label="Players ready"
+              max={seatedCount || 1}
+              value={readyCount}
+            />
             <strong>
               {readyCount} of {seatedCount} ready
             </strong>
@@ -1462,26 +2079,21 @@ function Lobby(props: {
         </aside>
 
         <div className="lobby-orbit-zone">
-          <div className="lobby-mobile-heading">
-            <div>
-              <span className="section-kicker">Seat sync</span>
-              <strong>The room is assembling.</strong>
-            </div>
-            <span className="lobby-capacity-copy">
-              {seatedCount} / {MAX_PLAYERS} seated
-            </span>
-          </div>
-
-          <div className="lobby-table-orbit" aria-hidden="true">
-            <Suspense fallback={null}>
-              <LivingTableScene
-                reducedEffects={props.reducedEffects}
-                variant="lobby"
-                view={props.view}
-              />
-            </Suspense>
-            <div className="lobby-table-rings" />
-            <div className="lobby-table-message">
+          <div className="lobby-table-orbit">
+            <SceneBoundary>
+              <Suspense fallback={null}>
+                <LivingTableScene
+                  reducedEffects={props.reducedEffects}
+                  variant="lobby"
+                  view={props.view}
+                />
+              </Suspense>
+            </SceneBoundary>
+            <div
+              className="lobby-table-message"
+              role="status"
+              aria-live="polite"
+            >
               <span>{tableLabel}</span>
               <strong>{tableHeading}</strong>
               <small>
@@ -1493,62 +2105,11 @@ function Lobby(props: {
               </small>
             </div>
           </div>
-
-          <div className="lobby-seat-grid">
-            {orderedPlayers.map((player, index) => {
-              const isViewer = player.id === props.view.viewerPlayerId;
-              const isHost = player.id === props.view.hostPlayerId;
-              const ready = player.isBot || (player.connected && player.ready);
-              const seatStatus =
-                !player.connected && !player.isBot
-                  ? "Offline"
-                  : ready
-                    ? "Ready"
-                    : "Waiting";
-
-              return (
-                <div
-                  key={player.id}
-                  className={`lobby-orbit-seat slot-${occupiedSlots[index]} ${isViewer ? "viewer" : ""} ${isHost ? "host" : ""} ${player.isBot ? "bot" : ""} ${ready ? "ready" : "waiting"}`}
-                  aria-label={`${player.name}, ${seatStatus}`}
-                >
-                  <span className="lobby-seat-number" aria-hidden="true">
-                    {String(index + 1).padStart(2, "0")}
-                  </span>
-                  <div className="lobby-orbit-avatar">
-                    {player.isBot ? (
-                      <Bot size={17} />
-                    ) : (
-                      <UsersRound size={17} />
-                    )}
-                  </div>
-                  <div className="lobby-orbit-copy">
-                    <strong>{player.name}</strong>
-                    <span>
-                      {isViewer ? "You · " : ""}
-                      {isHost ? "Host · " : ""}
-                      {seatStatus}
-                    </span>
-                  </div>
-                </div>
-              );
-            })}
-
-            {openSeats.map((slot) => (
-              <span
-                key={slot}
-                className={`lobby-open-seat slot-${slot}`}
-                aria-hidden="true"
-              >
-                <Plus size={9} />
-              </span>
-            ))}
-          </div>
         </div>
 
         <aside className="lobby-roster" aria-label="Players at the table">
           <div className="lobby-roster-heading">
-            <span>Signal manifest</span>
+            <span>Your table</span>
             <strong>
               {seatedCount} / {MAX_PLAYERS} seated
             </strong>
@@ -1561,12 +2122,15 @@ function Lobby(props: {
               const offline = !player.connected && !player.isBot;
 
               return (
-                <div className="lobby-roster-row" key={player.id}>
+                <div
+                  className={`lobby-roster-row lobby-orbit-seat ${isViewer ? "viewer" : ""} ${ready ? "ready" : "waiting"}`}
+                  key={player.id}
+                >
                   <span
                     className={`lobby-roster-node ${isViewer ? "viewer" : ""} ${player.isBot ? "bot" : ""} ${offline ? "offline" : ""}`}
                     aria-hidden="true"
                   />
-                  <div className="lobby-roster-name">
+                  <div className="lobby-roster-name lobby-orbit-copy">
                     <strong>{player.name}</strong>
                     <span>
                       {isViewer
@@ -1588,6 +2152,7 @@ function Lobby(props: {
                       className="lobby-remove-player"
                       aria-label={`Remove ${player.name}`}
                       title={`Remove ${player.name}`}
+                      disabled={!props.interactive}
                       onClick={() => props.onRemovePlayer(player.id)}
                     >
                       <Trash2 size={15} />
@@ -1605,13 +2170,16 @@ function Lobby(props: {
         aria-label="Lobby controls"
       >
         <div className="lobby-launch-state">
-          <span>Room pulse</span>
+          <span>
+            {readyCount} / {seatedCount} ready
+          </span>
           <strong>{canStart ? "All players locked in" : tableHeading}</strong>
         </div>
         <button
           className={`lobby-ready-control ${viewer?.ready ? "active" : ""}`}
           aria-label={viewer?.ready ? "Ready" : "I am ready"}
           aria-pressed={Boolean(viewer?.ready)}
+          disabled={!props.interactive}
           onClick={() => props.onSetReady(!viewer?.ready)}
         >
           <UserRoundCheck size={18} />
@@ -1623,6 +2191,7 @@ function Lobby(props: {
             className="lobby-add-bot"
             aria-label="Add Bot"
             title="Add Bot"
+            disabled={!props.interactive || seatedCount >= MAX_PLAYERS}
             onClick={props.onAddBot}
           >
             <Bot size={18} />
@@ -1633,7 +2202,7 @@ function Lobby(props: {
           <button
             className="lobby-start-game"
             aria-label="Start"
-            disabled={!canStart}
+            disabled={!canStart || !props.interactive}
             onClick={props.onStartGame}
           >
             <Sparkles size={18} />
@@ -1646,6 +2215,8 @@ function Lobby(props: {
 }
 
 function GameTable(props: {
+  interactive: boolean;
+  reaction: ReactionEvent | null;
   reducedEffects: boolean;
   view: PrivateGameView;
   onCallBullshit: () => void;
@@ -1688,7 +2259,7 @@ function GameTable(props: {
     (props.view.finalDecisionPlayerId ?? props.view.startingPlayerId) ===
       props.view.viewerPlayerId,
   );
-  const latestReaction = props.view.reactions?.at(-1);
+  const latestReaction = props.reaction;
 
   return (
     <main className="table-layout">
@@ -1706,7 +2277,7 @@ function GameTable(props: {
         ))}
       </section>
 
-      {latestReaction && Date.now() - latestReaction.createdAt < 12_000 && (
+      {latestReaction && (
         <div className="reaction-toast" role="status">
           <span>{reactionSymbol(latestReaction.kind)}</span>
           <strong>
@@ -1717,21 +2288,16 @@ function GameTable(props: {
       )}
 
       <section className={`claim-zone ${props.view.phase.toLowerCase()}`}>
-        <Suspense fallback={null}>
-          <LivingTableScene
-            reducedEffects={props.reducedEffects}
-            variant="game"
-            view={props.view}
-          />
-        </Suspense>
-        <div className="claim-orbit" aria-hidden="true">
-          <span />
-          <span />
-          <span />
-        </div>
-        <div className="arena-index" aria-hidden="true">
-          <span>BLUFF / LIVE</span>
-          <span>{String(props.view.roundNumber).padStart(2, "0")}</span>
+        <div className="game-scene-stage">
+          <SceneBoundary>
+            <Suspense fallback={null}>
+              <LivingTableScene
+                reducedEffects={props.reducedEffects}
+                variant="game"
+                view={props.view}
+              />
+            </Suspense>
+          </SceneBoundary>
         </div>
         <div className="claim-meta">
           <span>Round {props.view.roundNumber}</span>
@@ -1758,7 +2324,9 @@ function GameTable(props: {
               <button
                 className="primary-action compact"
                 disabled={
-                  !props.view.canViewerAct || props.view.phase !== "RoundActive"
+                  !props.interactive ||
+                  !props.view.canViewerAct ||
+                  props.view.phase !== "RoundActive"
                 }
                 onClick={props.onOpenClaimPicker}
               >
@@ -1767,7 +2335,9 @@ function GameTable(props: {
               </button>
               <button
                 className="danger-action"
-                disabled={!props.view.canViewerCallBullShit}
+                disabled={
+                  !props.interactive || !props.view.canViewerCallBullShit
+                }
                 onClick={props.onCallBullshit}
               >
                 <ShieldAlert size={18} />
@@ -1788,6 +2358,7 @@ function GameTable(props: {
             className="icon-button reaction-trigger"
             aria-label="React"
             title="React"
+            disabled={!props.interactive}
             onClick={props.onOpenReactions}
           >
             <SmilePlus size={19} />
@@ -1803,7 +2374,6 @@ function GameTable(props: {
       <section className="hand-dock" aria-label="Your cards">
         <div className="hand-title">
           <span>Your cards</span>
-          <small>Private channel</small>
           <strong>{props.view.viewerCards.length}</strong>
         </div>
         <div className="card-row">
@@ -2195,7 +2765,12 @@ function ClaimPicker(props: {
   );
 
   return (
-    <div className="sheet-backdrop" role="dialog" aria-modal="true">
+    <div
+      className="sheet-backdrop"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Claim builder"
+    >
       <section className="claim-sheet">
         <div className="sheet-scanline" aria-hidden="true" />
         <header className="sheet-header">
@@ -2261,7 +2836,8 @@ function ClaimPicker(props: {
 }
 
 function LastRoundSheet(props: { view: PrivateGameView; onClose: () => void }) {
-  const result = props.view.lastRoundResult!;
+  const [reviewView] = useState(props.view);
+  const result = reviewView.lastRoundResult!;
   const proofIds = new Set(result.proofCardIds ?? []);
   const truthTone =
     result.claimWasTrue === undefined
@@ -2271,13 +2847,18 @@ function LastRoundSheet(props: { view: PrivateGameView; onClose: () => void }) {
         : "false";
   const truthLabel =
     result.claimWasTrue === undefined
-      ? result.reason
+      ? "Round complete"
       : result.claimWasTrue
         ? "True Claim"
         : "False Claim";
 
   return (
-    <div className="sheet-backdrop" role="dialog" aria-modal="true">
+    <div
+      className="sheet-backdrop"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Last round"
+    >
       <section className="review-sheet">
         <div className="sheet-scanline" aria-hidden="true" />
         <header className="sheet-header">
@@ -2300,24 +2881,46 @@ function LastRoundSheet(props: { view: PrivateGameView; onClose: () => void }) {
           <strong>{truthLabel}</strong>
           <small>
             {result.penaltyPlayerId
-              ? `${playerName(props.view.players, result.penaltyPlayerId)} takes the card`
+              ? `${playerName(reviewView.players, result.penaltyPlayerId)} takes the card`
               : "No penalty this round"}
           </small>
         </div>
 
         <div className="result-summary">
           <ResultLine
-            label="BullShit called by"
+            label={
+              result.reason === "BULLSHIT_CALL"
+                ? "BullShit called by"
+                : "Resolution"
+            }
             value={
               result.callerPlayerId
-                ? playerName(props.view.players, result.callerPlayerId)
-                : "No one"
+                ? playerName(reviewView.players, result.callerPlayerId)
+                : result.reason === "FINAL_CLAIM"
+                  ? "Final claim · automatic review"
+                  : "Automatic review"
             }
           />
           <ResultLine
             label="Claimed by"
-            value={playerName(props.view.players, result.claimantPlayerId)}
+            value={playerName(reviewView.players, result.claimantPlayerId)}
           />
+          <ResultLine
+            label="Next starter"
+            value={
+              reviewView.phase === "GameOver"
+                ? "Match complete"
+                : playerName(reviewView.players, reviewView.startingPlayerId)
+            }
+          />
+          {result.eliminatedPlayerIds.length > 0 && (
+            <ResultLine
+              label="Eliminated"
+              value={result.eliminatedPlayerIds
+                .map((id) => playerName(reviewView.players, id))
+                .join(", ")}
+            />
+          )}
         </div>
 
         <div className="revealed-groups">
@@ -2326,7 +2929,7 @@ function LastRoundSheet(props: { view: PrivateGameView; onClose: () => void }) {
               key={hand.playerId}
               className={`revealed-group ${hand.playerId === result.penaltyPlayerId ? "penalty" : ""}`}
             >
-              <strong>{playerName(props.view.players, hand.playerId)}</strong>
+              <strong>{playerName(reviewView.players, hand.playerId)}</strong>
               <div className="mini-card-row">
                 {hand.cards.map((card) => (
                   <span
@@ -2384,7 +2987,12 @@ function ReactionDock(props: {
   onReact: (kind: ReactionKind) => void;
 }) {
   return (
-    <aside className="reaction-dock" aria-label="Table reactions">
+    <aside
+      className="reaction-dock"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Table reactions"
+    >
       <div className="reaction-dock-head">
         <strong>Table reaction</strong>
         <button
@@ -2412,6 +3020,7 @@ function ConfirmDialog(props: {
   description: string;
   confirmLabel: string;
   busy?: boolean;
+  confirmDisabled?: boolean;
   tone?: "default" | "danger";
   onCancel: () => void;
   onConfirm: () => void;
@@ -2449,7 +3058,7 @@ function ConfirmDialog(props: {
                 ? "danger-action"
                 : "primary-action compact"
             }
-            disabled={props.busy}
+            disabled={props.busy || props.confirmDisabled}
             onClick={props.onConfirm}
           >
             {props.busy ? "Leaving..." : props.confirmLabel}
@@ -2494,7 +3103,11 @@ function SettingsSheet(props: {
             <X size={18} />
           </button>
         </header>
-        <button className="setting-row" onClick={() => toggle("sound")}>
+        <button
+          className="setting-row"
+          aria-pressed={props.preferences.sound}
+          onClick={() => toggle("sound")}
+        >
           <Volume2 size={20} />
           <span>
             <strong>Sound effects</strong>
@@ -2508,6 +3121,7 @@ function SettingsSheet(props: {
         <button
           className="setting-row"
           disabled={!props.hapticsAvailable}
+          aria-pressed={props.preferences.haptics && props.hapticsAvailable}
           onClick={() => toggle("haptics")}
         >
           <Vibrate size={20} />
@@ -2530,6 +3144,7 @@ function SettingsSheet(props: {
         </button>
         <button
           className="setting-row"
+          aria-pressed={props.preferences.reducedEffects}
           onClick={() => toggle("reducedEffects")}
         >
           <Sparkles size={20} />
@@ -2558,7 +3173,11 @@ function ShareSheet(props: { view: PrivateGameView; onClose: () => void }) {
       width: 360,
       margin: 1,
       color: { dark: "#090b18", light: "#f7f8ff" },
-    }).then((value) => active && setQrCode(value));
+    })
+      .then((value) => active && setQrCode(value))
+      .catch(() => {
+        /* The share link remains usable without a QR code. */
+      });
     return () => {
       active = false;
     };

@@ -126,8 +126,11 @@ function stampClaim(
   const sequence = state.claimHistory.length + 1;
 
   return {
-    ...normalized,
-    id: normalized.id ?? claimId(state, sequence),
+    handType: normalized.handType,
+    primaryRank: normalized.primaryRank,
+    secondaryRank: normalized.secondaryRank,
+    suit: normalized.suit,
+    id: claimId(state, sequence),
     sequence,
     playerId: actorPlayerId,
     createdAt: now,

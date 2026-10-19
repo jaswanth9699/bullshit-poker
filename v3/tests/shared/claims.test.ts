@@ -144,6 +144,21 @@ test("Royal Flush is not ranked by suit", () => {
   );
 });
 
+test("cross-category comparison rejects malformed claims before accepting a higher hand", () => {
+  const low = claim("HIGH_CARD", "A");
+  const high = claim("ROYAL_FLUSH", undefined, undefined, "S");
+  for (const invalid of [
+    { handType: "ROYAL_FLUSH", suit: "Z" },
+    { handType: "PAIR", primaryRank: "15" },
+    { handType: "FULL_HOUSE", primaryRank: "K", secondaryRank: "K" },
+    { handType: "STRAIGHT", primaryRank: "2" },
+  ] as Claim[]) {
+    assert.throws(() => compareClaims(invalid, low));
+    assert.throws(() => compareClaims(high, invalid));
+    assert.throws(() => isClaimStrictlyHigher(invalid, low));
+  }
+});
+
 test("Ace-low straight requires the Ace", () => {
   const cards = [
     createCard("2", "S"),

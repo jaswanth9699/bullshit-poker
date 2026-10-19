@@ -1,4 +1,4 @@
-name = "bullshit-poker"
+name = "bullshit-poker-v2"
 main = "src/worker/worker.ts"
 compatibility_date = "2026-04-25"
 workers_dev = true
@@ -13,5 +13,13 @@ name = "ROOM_DURABLE_OBJECT"
 class_name = "RoomDurableObject"
 
 [[migrations]]
-tag = "v1"
+tag = "v2-initial"
+new_sqlite_classes = ["RoomDurableObjectV2"]
+
+[[migrations]]
+tag = "v1-swap-2026-08-21"
 new_sqlite_classes = ["RoomDurableObject"]
+
+[[migrations]]
+tag = "v1-swap-cleanup-2026-08-21"
+deleted_classes = ["RoomDurableObjectV2"]

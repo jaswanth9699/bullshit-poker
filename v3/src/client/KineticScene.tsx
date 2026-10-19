@@ -1,5 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
+import { ENTRY_SCENE_BOUNDS, fitSceneCamera } from "./sceneFraming.ts";
+import {
+  entryChoreography,
+  entryLayerPose,
+  entrySatellitePose,
+  entryTrailPose,
+} from "./entryChoreography.ts";
 import {
   browserVisualCapabilities,
   resolveVisualQuality,
@@ -126,6 +133,7 @@ export default function KineticScene(props: {
 
   useEffect(() => {
     const host = hostRef.current;
+    setSceneStatus("initializing");
     if (!host || !window.WebGLRenderingContext) {
       setSceneStatus("fallback");
       return;
@@ -133,7 +141,6 @@ export default function KineticScene(props: {
 
     const qualityConfig = VISUAL_QUALITY_CONFIG[quality];
     const scene = new THREE.Scene();
-    scene.fog = new THREE.FogExp2(0xe9edf0, 0.072);
     const camera = new THREE.PerspectiveCamera(36, 1, 0.1, 50);
     camera.position.set(0, 0.1, 9.2);
 
@@ -170,15 +177,35 @@ export default function KineticScene(props: {
     const world = new THREE.Group();
     scene.add(world);
     const reactor = new THREE.Group();
+    reactor.scale.setScalar(1.4);
     world.add(reactor);
 
     const geometries: THREE.BufferGeometry[] = [];
     const materials: THREE.Material[] = [];
     const textures: THREE.Texture[] = [];
+    const cardBackTexture = reactorTexture(qualityConfig.textureAnisotropy);
+    textures.push(cardBackTexture);
+    const cardBackMaterial = new THREE.MeshBasicMaterial({
+      map: cardBackTexture,
+    });
+    materials.push(cardBackMaterial);
+    const cardBackGeometry = new THREE.PlaneGeometry(1.58, 2.3);
+    geometries.push(cardBackGeometry);
+    const fanFaces = [
+      glyphTexture("A", "♥", "#e32929", qualityConfig.textureAnisotropy),
+      glyphTexture("K", "♠", "#111318", qualityConfig.textureAnisotropy),
+      glyphTexture("Q", "♦", "#e32929", qualityConfig.textureAnisotropy),
+      glyphTexture("J", "♣", "#111318", qualityConfig.textureAnisotropy),
+    ];
+    textures.push(...fanFaces);
+    const fanMaterials = fanFaces.map(
+      (map) => new THREE.MeshBasicMaterial({ map }),
+    );
+    materials.push(...fanMaterials);
 
     const deckGeometry = new THREE.BoxGeometry(1.72, 2.46, 0.07);
     geometries.push(deckGeometry);
-    const deckMaterials = [0x111318, 0x252a32, 0x4169ff, 0xff5a36].map(
+    const deckMaterials = [0x111318, 0xf7f8f4, 0x4169ff, 0xff5a36].map(
       (color) => {
         const material = new THREE.MeshPhysicalMaterial({
           color,
@@ -199,6 +226,15 @@ export default function KineticScene(props: {
       const offset = index - 6;
       card.position.set(offset * 0.035, offset * -0.022, offset * -0.06);
       card.rotation.z = offset * 0.014;
+      if (index % 3 === 0) {
+        const material =
+          index === 6
+            ? cardBackMaterial
+            : fanMaterials[index < 6 ? index / 3 : index / 3 - 1];
+        const back = new THREE.Mesh(cardBackGeometry, material);
+        back.position.z = 0.04;
+        card.add(back);
+      }
       reactor.add(card);
       return card;
     });
@@ -207,10 +243,8 @@ export default function KineticScene(props: {
     textures.push(faceTexture);
     const faceGeometry = new THREE.PlaneGeometry(1.58, 2.3);
     geometries.push(faceGeometry);
-    const faceMaterial = new THREE.MeshStandardMaterial({
+    const faceMaterial = new THREE.MeshBasicMaterial({
       map: faceTexture,
-      roughness: 0.4,
-      metalness: 0.08,
     });
     materials.push(faceMaterial);
     const face = new THREE.Mesh(faceGeometry, faceMaterial);
@@ -219,20 +253,27 @@ export default function KineticScene(props: {
     reactor.add(face);
 
     const ringSpecs = [
-      { radius: 2.15, tube: 0.032, color: 0x111318, tilt: 0.12 },
-      { radius: 2.82, tube: 0.022, color: 0x4169ff, tilt: -0.34 },
-      { radius: 3.5, tube: 0.014, color: 0xff5a36, tilt: 0.5 },
+      { radius: 2.15, tube: 0.04, color: 0x94a8d9, tilt: 0.12 },
+      { radius: 2.82, tube: 0.038, color: 0x4169ff, tilt: -0.34 },
+      { radius: 3.5, tube: 0.032, color: 0xff5a36, tilt: 0.5 },
     ] as const;
     const rings = ringSpecs.map((spec, index) => {
-      const geometry = new THREE.TorusGeometry(spec.radius, spec.tube, 8, 128);
+      const geometry = new THREE.TorusGeometry(
+        spec.radius,
+        spec.tube,
+        8,
+        96,
+        Math.PI * 1.65,
+      );
       const material = new THREE.MeshBasicMaterial({
         color: spec.color,
         transparent: true,
-        opacity: index === 0 ? 0.56 : 0.72,
+        opacity: index === 0 ? 0.75 : 1,
       });
       geometries.push(geometry);
       materials.push(material);
       const ring = new THREE.Mesh(geometry, material);
+      ring.scale.setScalar(0.78);
       ring.rotation.x = spec.tilt;
       ring.rotation.y = spec.tilt * 0.44;
       world.add(ring);
@@ -248,7 +289,7 @@ export default function KineticScene(props: {
       materials.push(material);
       const bar = new THREE.Mesh(barGeometry, material);
       const angle = (index / 24) * Math.PI * 2;
-      bar.position.set(Math.cos(angle) * 3.22, Math.sin(angle) * 3.22, -0.8);
+      bar.position.set(Math.cos(angle) * 2.52, Math.sin(angle) * 2.52, -0.8);
       bar.rotation.z = angle;
       world.add(bar);
       return bar;
@@ -259,13 +300,14 @@ export default function KineticScene(props: {
     const satelliteTextures = [
       glyphTexture("A", "♦", "#e32929", qualityConfig.textureAnisotropy),
       glyphTexture("K", "♠", "#111318", qualityConfig.textureAnisotropy),
+      glyphTexture("Q", "♥", "#e32929", qualityConfig.textureAnisotropy),
+      glyphTexture("J", "♣", "#111318", qualityConfig.textureAnisotropy),
     ];
     textures.push(...satelliteTextures);
     const satellites = satelliteTextures.map((texture, index) => {
-      const material = new THREE.MeshStandardMaterial({
+      const material = new THREE.MeshBasicMaterial({
         map: texture,
         side: THREE.DoubleSide,
-        roughness: 0.38,
       });
       materials.push(material);
       const card = new THREE.Mesh(satelliteGeometry, material);
@@ -274,7 +316,7 @@ export default function KineticScene(props: {
       return card;
     });
 
-    const grid = new THREE.GridHelper(26, 34, 0x4169ff, 0x9aa2aa);
+    const grid = new THREE.GridHelper(26, 34, 0x4169ff, 0x4169ff);
     grid.position.set(0, -4.1, -2.6);
     grid.rotation.x = Math.PI * 0.08;
     const gridMaterials = Array.isArray(grid.material)
@@ -282,94 +324,175 @@ export default function KineticScene(props: {
       : [grid.material];
     gridMaterials.forEach((material) => {
       material.transparent = true;
-      material.opacity = quality === "reduced" ? 0.08 : 0.18;
+      material.opacity = 0.11;
       materials.push(material);
     });
     geometries.push(grid.geometry);
     scene.add(grid);
 
+    // Four tapered wakes follow the actual cards in one instanced draw.
+    const sparkGeometry = new THREE.OctahedronGeometry(0.065);
+    const sparkMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff });
+    geometries.push(sparkGeometry);
+    materials.push(sparkMaterial);
+    const trailLength = quality === "full" ? 6 : 3;
+    const sparkCount = trailLength * 4;
+    const sparks = new THREE.InstancedMesh(
+      sparkGeometry,
+      sparkMaterial,
+      sparkCount,
+    );
+    const sparkPose = new THREE.Object3D();
+    for (let index = 0; index < sparkCount; index++) {
+      sparks.setColorAt(
+        index,
+        new THREE.Color(
+          Math.floor(index / trailLength) % 2 ? 0x8ba5ff : 0xff8b68,
+        ),
+      );
+    }
+    world.add(sparks);
+
+    let inView = true;
     let pointerX = 0;
     let pointerY = 0;
     let contextAvailable = true;
     const loop = new VisualFrameLoop({ maxDeltaMs: 50 });
-    loop.subscribe(VISUAL_FRAME_PRIORITY.view, ({ elapsedMs }) => {
-      const elapsed = elapsedMs / 1_000;
-      const motion = quality === "reduced" ? 0 : 1;
+    const failScene = () => {
+      contextAvailable = false;
+      loop.stop();
+      host.dataset.motionPlaying = "false";
+      setSceneStatus("fallback");
+    };
+    loop.subscribe(VISUAL_FRAME_PRIORITY.view, ({ elapsedMs, deltaMs }) => {
+      const pose = entryChoreography(elapsedMs / 1_000, quality === "reduced");
+      const orbit = pose.orbit;
+      if (host.dataset.motionPhase !== pose.label)
+        host.dataset.motionPhase = pose.label;
+      const follow = 1 - Math.exp(-deltaMs / 180);
       world.rotation.y +=
-        (pointerX * qualityConfig.pointerInfluence * 0.7 - world.rotation.y) *
-        0.025;
+        (pointerX * qualityConfig.pointerInfluence * 0.12 - world.rotation.y) *
+        follow;
       world.rotation.x +=
-        (-pointerY * qualityConfig.pointerInfluence * 0.34 - world.rotation.x) *
-        0.025;
-      reactor.position.y =
-        Math.sin(elapsed * 0.72) * qualityConfig.floatingAmplitude * motion;
-      reactor.rotation.z = Math.sin(elapsed * 0.28) * 0.035 * motion;
+        (-pointerY * qualityConfig.pointerInfluence * 0.06 - world.rotation.x) *
+        follow;
+      reactor.position.y = pose.lift;
+      reactor.rotation.z = pose.lift * 0.35;
       deckLayers.forEach((card, index) => {
-        card.rotation.y =
-          Math.sin(elapsed * 0.35 + index * 0.16) * 0.018 * motion;
+        const layer = entryLayerPose(index, pose.fan, orbit);
+        card.position.set(layer.x, layer.y, layer.z);
+        card.rotation.set(0, 0, layer.roll);
       });
+      face.position.z = 0.47 + pose.fan * 0.12;
+      face.rotation.z = 0.055 - pose.fan * 0.11;
       rings.forEach((ring, index) => {
-        ring.rotation.z = elapsed * (index % 2 === 0 ? 0.05 : -0.04) * motion;
+        ring.rotation.z = orbit * (index % 2 === 0 ? 1 : -1) + index * 2.1;
       });
       bars.forEach((bar, index) => {
-        const pulse = 0.72 + Math.sin(elapsed * 1.1 + index * 0.45) * 0.22;
-        bar.scale.y = quality === "reduced" ? 0.8 : pulse;
+        bar.scale.y = 0.65 + Math.sin(orbit * 2 + index * 0.45) * 0.25;
       });
-      satellites[0].position.set(
-        -3.35,
-        0.8 + Math.sin(elapsed * 0.54) * 0.12 * motion,
-        -0.3,
-      );
-      satellites[0].rotation.set(-0.08, 0.18, -0.2);
-      satellites[1].position.set(
-        3.45,
-        -0.75 + Math.sin(elapsed * 0.48 + 1.4) * 0.12 * motion,
-        -0.7,
-      );
-      satellites[1].rotation.set(0.08, -0.2, 0.22);
+      satellites.forEach((card, index) => {
+        const satellite = entrySatellitePose(index, orbit);
+        card.position.set(satellite.x, satellite.y, satellite.z);
+        card.rotation.set(0, 0, satellite.roll);
+      });
+      for (let index = 0; index < sparkCount; index++) {
+        const trail = entryTrailPose(
+          Math.floor(index / trailLength),
+          index % trailLength,
+          trailLength,
+          orbit,
+        );
+        sparkPose.position.set(trail.x, trail.y, trail.z);
+        sparkPose.rotation.set(0, 0, trail.roll);
+        sparkPose.scale.setScalar(trail.scale);
+        sparkPose.updateMatrix();
+        sparks.setMatrixAt(index, sparkPose.matrix);
+      }
+      sparks.instanceMatrix.needsUpdate = true;
+      // Slow complementary lighting reveals the layered edges without flashes.
+      cobaltLight.intensity = 30 + Math.sin(orbit) * 5;
+      orangeLight.intensity = 26 - Math.sin(orbit) * 4;
+      cobaltLight.position.y = 0.8 + Math.sin(orbit) * 0.6;
+      orangeLight.position.y = -1.5 + Math.cos(orbit) * 0.5;
     });
     loop.subscribe(VISUAL_FRAME_PRIORITY.render, () => {
-      if (contextAvailable) renderer.render(scene, camera);
+      if (!contextAvailable) return;
+      try {
+        renderer.render(scene, camera);
+      } catch {
+        failScene();
+      }
     });
 
     const resize = () => {
-      const width = Math.max(1, host.clientWidth);
-      const height = Math.max(1, host.clientHeight);
-      const mobile = width <= 760;
-      host.dataset.sceneLayout = mobile ? "mobile" : "desktop";
-      world.scale.setScalar(mobile ? 0.69 : 1);
-      world.position.set(mobile ? 0.35 : 1.4, mobile ? -0.55 : -0.1, 0);
-      camera.aspect = width / height;
-      camera.position.z = mobile ? 9.8 : 9.2;
-      camera.updateProjectionMatrix();
-      renderer.setSize(width, height, false);
-      loop.runFrame(quality === "reduced" ? 0 : performance.now());
+      if (!contextAvailable) return;
+      try {
+        const width = Math.max(1, host.clientWidth);
+        const height = Math.max(1, host.clientHeight);
+        const mobile = window.matchMedia("(max-width: 760px)").matches;
+        host.dataset.sceneLayout = mobile ? "mobile" : "desktop";
+        world.scale.setScalar(1);
+        world.position.set(0, 0, 0);
+        const bounds = ENTRY_SCENE_BOUNDS.clone();
+        bounds.min.multiply(world.scale).add(world.position);
+        bounds.max.multiply(world.scale).add(world.position);
+        const projected = fitSceneCamera(
+          camera,
+          bounds,
+          new THREE.Vector3(0, 0, 0),
+          new THREE.Vector3(0, 0, 1),
+          width,
+          height,
+        );
+        renderer.setSize(width, height, false);
+        host.dataset.sceneFraming = "contain";
+        host.dataset.sceneProjectedBounds = JSON.stringify(projected);
+        loop.runFrame(quality === "reduced" ? 0 : performance.now());
+      } catch {
+        failScene();
+      }
     };
     const observer = new ResizeObserver(resize);
     observer.observe(host);
 
     const onPointerMove = (event: PointerEvent) => {
-      pointerX = (event.clientX / Math.max(window.innerWidth, 1) - 0.5) * 0.55;
-      pointerY = (event.clientY / Math.max(window.innerHeight, 1) - 0.5) * 0.4;
+      const rect = host.getBoundingClientRect();
+      const inside =
+        event.clientX >= rect.left &&
+        event.clientX <= rect.right &&
+        event.clientY >= rect.top &&
+        event.clientY <= rect.bottom;
+      pointerX = inside
+        ? ((event.clientX - rect.left) / Math.max(rect.width, 1)) * 2 - 1
+        : 0;
+      pointerY = inside
+        ? ((event.clientY - rect.top) / Math.max(rect.height, 1)) * 2 - 1
+        : 0;
     };
+    const canAnimate = () =>
+      contextAvailable && !document.hidden && inView && quality !== "reduced";
     const onVisibility = () => {
-      if (document.hidden || quality === "reduced") loop.stop();
-      else loop.start();
-      if (!document.hidden) {
-        loop.runFrame(quality === "reduced" ? 0 : performance.now());
-      }
+      if (canAnimate()) loop.start();
+      else loop.stop();
+      host.dataset.motionPlaying = String(canAnimate());
     };
+    const intersection = new IntersectionObserver(([entry]) => {
+      inView = entry.isIntersecting;
+      onVisibility();
+    });
+    intersection.observe(host);
     const onContextLost = (event: Event) => {
       event.preventDefault();
-      contextAvailable = false;
-      loop.stop();
-      setSceneStatus("fallback");
+      failScene();
     };
     const onContextRestored = () => {
       contextAvailable = true;
-      setSceneStatus("ready");
       resize();
-      if (quality !== "reduced" && !document.hidden) loop.start();
+      if (contextAvailable) {
+        setSceneStatus("ready");
+        onVisibility();
+      }
     };
 
     if (quality !== "reduced") {
@@ -382,11 +505,13 @@ export default function KineticScene(props: {
       onContextRestored,
     );
     resize();
-    if (quality !== "reduced" && !document.hidden) loop.start();
-    setSceneStatus("ready");
+    onVisibility();
+    if (contextAvailable) setSceneStatus("ready");
 
     return () => {
+      intersection.disconnect();
       loop.dispose();
+      sparks.dispose();
       observer.disconnect();
       window.removeEventListener("pointermove", onPointerMove);
       document.removeEventListener("visibilitychange", onVisibility);

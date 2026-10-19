@@ -116,6 +116,7 @@ export class RoomDurableObjectV3 {
 
     return handleRoomHttpRequest(request, {
       authority: this.authority,
+      joinRoom: (input) => this.sessions.joinRoom(input),
       identity,
       now: () => Date.now(),
       rng,

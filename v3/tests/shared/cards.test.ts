@@ -43,7 +43,12 @@ test("shuffleDeck preserves cards and is deterministic with injected RNG", () =>
 });
 
 test("shuffleDeck rejects RNG values outside [0, 1)", () => {
-  assert.throws(() => shuffleDeck(createDeck(), () => 1), /RNG/);
+  for (const value of [1, -0.01, NaN, Infinity, -Infinity]) {
+    const deck = createDeck();
+    const snapshot = structuredClone(deck);
+    assert.throws(() => shuffleDeck(deck, () => value), /RNG/);
+    assert.deepEqual(deck, snapshot);
+  }
 });
 
 test("shuffleDeck prefers bounded random integers when available", () => {

@@ -9,6 +9,8 @@ import {
   type RoomSocketLike,
 } from "../../src/durable-objects/index.ts";
 import {
+  applyCallBullshit,
+  applySubmitClaim,
   createCard,
   type GameState,
   type PlayerState,
@@ -482,11 +484,11 @@ test("RoomSessionManager rejects playerId mismatch and stale post-resolution rac
 
   assert.equal(
     friendSocket.lastMessageOfType("ACTION_REJECTED")?.code,
-    "ROUND_ALREADY_RESOLVED",
+    "STALE_STATE_REVISION",
   );
 });
 
-test("RoomSessionManager advances from round review into the next dealt round", async () => {
+test("RoomSessionManager broadcasts the frozen result and redealt round together", async () => {
   const room = await startedRoom();
   const manager = new RoomSessionManager(
     room.authority,
@@ -543,99 +545,101 @@ test("RoomSessionManager advances from round review into the next dealt round", 
     }),
     1_100,
   );
-  assert.equal((await room.authority.getState())?.phase, "ResolvingRound");
-
-  hostSocket.clear();
-  friendSocket.clear();
-  await manager.handleSocketMessage(
-    friendSessionId,
-    JSON.stringify({
-      type: "START_NEXT_ROUND",
-      requestId: "next-1",
-    }),
-    2_000,
-  );
-
   const update = friendSocket.lastMessageOfType("ROOM_UPDATED");
   assert.equal(update?.reason, "ACTION_ACCEPTED");
-  assert.equal(update?.requestId, "next-1");
+  assert.equal(update?.requestId, "call-1");
   assert.equal(update?.view.phase, "RoundActive");
   assert.equal(update?.view.roundNumber, 2);
   assert.equal(update?.view.startingPlayerId, room.friendPlayerId);
   assert.equal(update?.view.viewerCards.length, 1);
-});
-
-test("RoomSessionManager automatically advances after the round reveal beat", async () => {
-  const room = await startedRoom();
-  let now = 500;
-  const manager = new RoomSessionManager(room.authority, {
-    now: () => now,
-    rng: () => 0,
-    autoNextRoundDelayMs: 0,
-  });
-  const hostSocket = new FakeSocket();
-  const friendSocket = new FakeSocket();
-  const hostSessionId = await connectPlayer({
-    manager,
-    socket: hostSocket,
-    playerId: room.hostPlayerId,
-    reconnectToken: room.hostToken,
-    identity: room.identity,
-  });
-  const friendSessionId = await connectPlayer({
-    manager,
-    socket: friendSocket,
-    playerId: room.friendPlayerId,
-    reconnectToken: room.friendToken,
-    identity: room.identity,
-  });
-
-  const startState = await room.authority.getState();
-  await manager.handleSocketMessage(
-    hostSessionId,
-    JSON.stringify({
-      type: "SUBMIT_CLAIM",
-      envelope: {
-        requestId: "claim-1",
-        roomId: "room-1",
-        playerId: room.hostPlayerId,
-        stateRevision: startState!.stateRevision,
-        turnId: startState!.currentTurnId,
-        payload: { claim: { handType: "HIGH_CARD", primaryRank: "A" } },
-      },
-    }),
-    1_000,
+  assert.equal(update?.roundResult?.roundNumber, 1);
+  assert.deepEqual(update?.view.lastRoundResult, update?.roundResult);
+  assert.deepEqual(
+    update?.roundResult?.revealedHands,
+    claimState?.players.map((player) => ({
+      playerId: player.id,
+      cards: player.roundCards,
+    })),
   );
 
-  const claimState = await room.authority.getState();
-  friendSocket.clear();
-  now = 2_000;
+  const afterCall = await room.authority.getState();
   await manager.handleSocketMessage(
     friendSessionId,
-    JSON.stringify({
-      type: "CALL_BULLSHIT",
-      envelope: {
-        requestId: "call-1",
-        roomId: "room-1",
-        playerId: room.friendPlayerId,
-        stateRevision: claimState!.stateRevision,
-        claimWindowId: claimState!.activeClaimWindow?.id,
-        payload: {},
-      },
-    }),
-    1_100,
+    JSON.stringify({ type: "START_NEXT_ROUND", requestId: "obsolete-next" }),
+    2_000,
   );
+  assert.equal(
+    friendSocket.lastMessageOfType("ACTION_REJECTED")?.code,
+    "ROUND_NOT_RESOLVED",
+  );
+  assert.deepEqual(await room.authority.getState(), afterCall);
+});
 
-  assert.equal((await room.authority.getState())?.phase, "ResolvingRound");
-  await new Promise((resolve) => setTimeout(resolve, 0));
+test("RoomSessionManager recovers a persisted legacy review on reconnect exactly once", async () => {
+  const room = await startedRoom();
+  const state = (await room.authority.getState())!;
+  const claimed = applySubmitClaim(
+    state,
+    {
+      requestId: "legacy-claim",
+      roomId: state.roomId,
+      playerId: room.hostPlayerId,
+      stateRevision: state.stateRevision,
+      turnId: state.currentTurnId,
+      payload: { claim: { handType: "HIGH_CARD", primaryRank: "A" } },
+    },
+    600,
+  );
+  assert.ok(claimed.ok);
+  const resolved = applyCallBullshit(
+    claimed.state,
+    {
+      requestId: "legacy-call",
+      roomId: state.roomId,
+      playerId: room.friendPlayerId,
+      stateRevision: claimed.state.stateRevision,
+      claimWindowId: claimed.state.activeClaimWindow?.id,
+      payload: {},
+    },
+    700,
+  );
+  assert.ok(resolved.ok);
+  assert.equal(resolved.state.phase, "ResolvingRound");
 
-  const state = await room.authority.getState();
-  const update = friendSocket.lastMessageOfType("ROOM_UPDATED");
-  assert.equal(state?.phase, "RoundActive");
-  assert.equal(state?.roundNumber, 2);
-  assert.equal(update?.reason, "AUTO_NEXT_ROUND");
-  assert.equal(update?.view.phase, "RoundActive");
-  assert.equal(update?.view.roundNumber, 2);
+  const store = new MemoryRoomStateStore(resolved.state);
+  const restartedAuthority = new RoomAuthority(store);
+  const manager = new RoomSessionManager(restartedAuthority, { rng: () => 0 });
+  const firstSocket = new FakeSocket();
+  const secondSocket = new FakeSocket();
+  const results = await Promise.all([
+    manager.connectSocket({
+      socket: firstSocket,
+      playerId: room.hostPlayerId,
+      reconnectToken: room.hostToken,
+      identity: room.identity,
+    }),
+    manager.connectSocket({
+      socket: secondSocket,
+      playerId: room.friendPlayerId,
+      reconnectToken: room.friendToken,
+      identity: room.identity,
+    }),
+  ]);
+  assert.ok(results.every((result) => result.ok));
+  const recovered = await store.getState();
+  assert.equal(recovered?.phase, "RoundActive");
+  assert.equal(recovered?.roundNumber, 2);
+  assert.equal(recovered?.stateRevision, resolved.state.stateRevision + 1);
+  assert.deepEqual(recovered?.lastRoundResult, resolved.roundResult);
+  for (const socket of [firstSocket, secondSocket]) {
+    const accepted = socket.lastMessageOfType("SESSION_ACCEPTED");
+    assert.equal(accepted?.view.phase, "RoundActive");
+    assert.equal(accepted?.view.roundNumber, 2);
+    assert.deepEqual(
+      accepted?.view.lastRoundResult,
+      JSON.parse(JSON.stringify(resolved.roundResult)),
+    );
+  }
 });
 
 test("RoomSessionManager adds bot seats from a host live session", async () => {
@@ -869,6 +873,8 @@ test("RoomSessionManager lets a bot call BullShit before its turn claim", async 
   );
   const manager = new RoomSessionManager(authority, {
     now: () => 1_000,
+    rng: () => 0,
+    botStepLimit: 1,
     botActionMinDelayMs: 0,
     botActionMaxDelayMs: 0,
   });
@@ -885,7 +891,8 @@ test("RoomSessionManager lets a bot call BullShit before its turn claim", async 
   const state = await authority.getState();
   const botUpdate = socket.lastMessageOfType("ROOM_UPDATED");
 
-  assert.equal(state?.phase, "ResolvingRound");
+  assert.equal(state?.phase, "RoundActive");
+  assert.equal(state?.roundNumber, 2);
   assert.equal(state?.lastRoundResult?.reason, "BULLSHIT_CALL");
   assert.equal(state?.lastRoundResult?.callerPlayerId, "bot");
   assert.equal(botUpdate?.acceptedByPlayerId, "bot");
@@ -1440,4 +1447,249 @@ test("RoomSessionManager serializes simultaneous final-human leaves", async () =
   );
   assert.equal(await room.authority.getState(), undefined);
   assert.equal(manager.activeSessionCount, 0);
+});
+
+test("PIN reclaim retires the old socket before queued gameplay or leave can run", async () => {
+  const room = await startedRoom();
+  const manager = new RoomSessionManager(room.authority, { rng: () => 0 });
+  const oldSocket = new FakeSocket();
+  const oldSessionId = await connectPlayer({
+    manager,
+    socket: oldSocket,
+    playerId: room.hostPlayerId,
+    reconnectToken: room.hostToken,
+    identity: room.identity,
+  });
+  const before = (await room.authority.getState())!;
+  const [reclaimed] = await Promise.all([
+    manager.joinRoom({
+      name: "Host",
+      pin: "1234",
+      now: 600,
+      identity: room.identity,
+    }),
+    manager.handleSocketMessage(
+      oldSessionId,
+      JSON.stringify({
+        type: "LEAVE_GAME",
+        requestId: "stale-leave",
+        matchId: before.matchId,
+      }),
+      601,
+    ),
+    manager.handleSocketMessage(
+      oldSessionId,
+      JSON.stringify({
+        type: "END_GAME",
+        requestId: "stale-end",
+        matchId: before.matchId,
+      }),
+      602,
+    ),
+  ]);
+  assert.ok(reclaimed.ok);
+  assert.ok(reclaimed.reclaimed);
+  assert.deepEqual(oldSocket.closed, {
+    code: 4000,
+    reason: "SESSION_REPLACED",
+  });
+  assert.equal(manager.activeSessionCount, 0);
+  const afterReclaim = (await room.authority.getState())!;
+  assert.equal(afterReclaim.phase, "RoundActive");
+  assert.equal(afterReclaim.players[0].leftAt, undefined);
+  assert.equal(afterReclaim.stateRevision, before.stateRevision + 1);
+  await manager.disconnectSession(oldSessionId, 603);
+  assert.deepEqual(await room.authority.getState(), afterReclaim);
+
+  const newSocket = new FakeSocket();
+  const newSessionId = await connectPlayer({
+    manager,
+    socket: newSocket,
+    playerId: room.hostPlayerId,
+    reconnectToken: reclaimed.reconnectToken!,
+    identity: room.identity,
+  });
+  await manager.handleSocketMessage(
+    newSessionId,
+    JSON.stringify({
+      type: "END_GAME",
+      requestId: "current-end",
+      matchId: afterReclaim.matchId,
+    }),
+    700,
+  );
+  assert.equal((await room.authority.getState())?.phase, "GameOver");
+  assert.equal(
+    newSocket.lastMessageOfType("ROOM_UPDATED")?.requestId,
+    "current-end",
+  );
+});
+
+test("failed PIN reclaim leaves the current connection authoritative", async () => {
+  const room = await lobbyRoom();
+  const manager = new RoomSessionManager(room.authority);
+  const socket = new FakeSocket();
+  const sessionId = await connectPlayer({
+    manager,
+    socket,
+    playerId: room.hostPlayerId,
+    reconnectToken: room.hostToken,
+    identity: room.identity,
+  });
+  const rejected = await manager.joinRoom({
+    name: "Host",
+    pin: "0000",
+    now: 600,
+    identity: room.identity,
+  });
+  assert.ok(!rejected.ok);
+  assert.equal(rejected.code, "PIN_MISMATCH");
+  assert.equal(socket.closed, undefined);
+  assert.equal(manager.activeSessionCount, 1);
+  await manager.handleSocketMessage(
+    sessionId,
+    JSON.stringify({
+      type: "SET_READY",
+      requestId: "still-ready",
+      ready: true,
+    }),
+    700,
+  );
+  assert.equal((await room.authority.getState())?.players[0].ready, true);
+});
+
+test("replaced-session close and queued commands cannot disconnect or mutate the replacement", async () => {
+  const room = await startedRoom();
+  const manager = new RoomSessionManager(room.authority);
+  const oldSocket = new FakeSocket();
+  const oldSessionId = await connectPlayer({
+    manager,
+    socket: oldSocket,
+    playerId: room.hostPlayerId,
+    reconnectToken: room.hostToken,
+    identity: room.identity,
+  });
+  const before = (await room.authority.getState())!;
+  const replacement = new FakeSocket();
+  const [connected] = await Promise.all([
+    manager.connectSocket({
+      socket: replacement,
+      playerId: room.hostPlayerId,
+      reconnectToken: room.hostToken,
+      identity: room.identity,
+      now: 600,
+    }),
+    manager.handleSocketMessage(
+      oldSessionId,
+      JSON.stringify({
+        type: "END_GAME",
+        requestId: "old-end",
+        matchId: before.matchId,
+      }),
+      601,
+    ),
+    manager.disconnectSession(oldSessionId, 602),
+  ]);
+  assert.ok(connected.ok);
+  assert.equal(manager.activeSessionCount, 1);
+  assert.deepEqual(await room.authority.getState(), before);
+  assert.equal(replacement.closed, undefined);
+});
+
+test("a leave accepted before a racing reconnect cannot restore the departed seat", async () => {
+  const room = await startedRoom();
+  const manager = new RoomSessionManager(room.authority);
+  const socket = new FakeSocket();
+  const sessionId = await connectPlayer({
+    manager,
+    socket,
+    playerId: room.hostPlayerId,
+    reconnectToken: room.hostToken,
+    identity: room.identity,
+  });
+  const before = (await room.authority.getState())!;
+  const replacement = new FakeSocket();
+  const [, connected] = await Promise.all([
+    manager.handleSocketMessage(
+      sessionId,
+      JSON.stringify({
+        type: "LEAVE_GAME",
+        requestId: "leave-first",
+        matchId: before.matchId,
+      }),
+      600,
+    ),
+    manager.connectSocket({
+      socket: replacement,
+      playerId: room.hostPlayerId,
+      reconnectToken: room.hostToken,
+      identity: room.identity,
+      now: 601,
+    }),
+  ]);
+  assert.ok(!connected.ok);
+  assert.equal(connected.code, "PLAYER_LEFT_MATCH");
+  assert.equal(
+    socket.lastMessageOfType("LEAVE_ACCEPTED")?.requestId,
+    "leave-first",
+  );
+  assert.equal(
+    (await room.authority.getState())?.winnerPlayerId,
+    room.friendPlayerId,
+  );
+  assert.equal(manager.activeSessionCount, 0);
+});
+
+test("duplicate lobby commands acknowledge current state without repeating or reversing changes", async () => {
+  const room = await lobbyRoom();
+  const manager = new RoomSessionManager(room.authority);
+  const socket = new FakeSocket();
+  const sessionId = await connectPlayer({
+    manager,
+    socket,
+    playerId: room.hostPlayerId,
+    reconnectToken: room.hostToken,
+    identity: room.identity,
+  });
+  const add = JSON.stringify({ type: "ADD_BOT", requestId: "add-once" });
+  await Promise.all([
+    manager.handleSocketMessage(sessionId, add, 600),
+    manager.handleSocketMessage(sessionId, add, 601),
+  ]);
+  const afterAdd = (await room.authority.getState())!;
+  assert.equal(afterAdd.players.length, 2);
+  assert.equal(socket.lastMessageOfType("ROOM_UPDATED")?.requestId, "add-once");
+  await manager.handleSocketMessage(
+    sessionId,
+    JSON.stringify({
+      type: "ADD_BOT",
+      requestId: "add-once",
+      name: "Different bot",
+    }),
+    602,
+  );
+  assert.equal(
+    socket.lastMessageOfType("ACTION_REJECTED")?.code,
+    "REQUEST_ID_REUSED",
+  );
+  assert.deepEqual(await room.authority.getState(), afterAdd);
+
+  const ready = JSON.stringify({
+    type: "SET_READY",
+    requestId: "ready-once",
+    ready: true,
+  });
+  await manager.handleSocketMessage(sessionId, ready, 700);
+  await manager.handleSocketMessage(
+    sessionId,
+    JSON.stringify({ type: "SET_READY", requestId: "unready", ready: false }),
+    701,
+  );
+  const unready = (await room.authority.getState())!;
+  await manager.handleSocketMessage(sessionId, ready, 702);
+  assert.deepEqual(await room.authority.getState(), unready);
+  const acknowledgement = socket.lastMessageOfType("ROOM_UPDATED");
+  assert.equal(acknowledgement?.reason, "ACTION_ACCEPTED");
+  assert.equal(acknowledgement?.requestId, "ready-once");
+  assert.equal(acknowledgement?.view.players[0].ready, false);
 });

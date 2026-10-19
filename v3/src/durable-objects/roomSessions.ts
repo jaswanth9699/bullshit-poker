@@ -6,6 +6,7 @@ import {
   type CallBullshitPayload,
   type ClientActionEnvelope,
   type GameState,
+  type JoinRoomInput,
   type LifecycleResult,
   type PrivateGameView,
   type Rng,
@@ -36,6 +37,7 @@ export type RoomSocketLike = {
 
 export type RoomSessionAuthority = {
   getState(): Promise<GameState | undefined>;
+  joinRoom(input: JoinRoomInput): Promise<LifecycleResult>;
   deleteRoom?(): Promise<void>;
   connectPlayer(
     playerId: string,
@@ -93,10 +95,12 @@ export type RoomSessionAuthority = {
   submitClaim(
     envelope: ClientActionEnvelope<SubmitClaimPayload>,
     now: number,
+    rng: Rng,
   ): Promise<ServerActionResult>;
   callBullshit(
     envelope: ClientActionEnvelope<CallBullshitPayload>,
     now: number,
+    rng: Rng,
   ): Promise<ServerActionResult>;
 };
 
@@ -117,19 +121,20 @@ type SessionRecord = {
   playerId: string;
   socket: RoomSocketLike;
   identity: RoomIdentityProvider;
+  acceptedRequests: Map<string, string>;
+  activeRequest?: { requestId: string; fingerprint: string };
 };
 
 export type RoomSessionManagerOptions = {
   now?: () => number;
   rng?: Rng;
   botStepLimit?: number;
-  autoNextRoundDelayMs?: number;
   botActionMinDelayMs?: number;
   botActionMaxDelayMs?: number;
 };
 
 const DEFAULT_BOT_STEP_LIMIT = 20;
-const DEFAULT_AUTO_NEXT_ROUND_DELAY_MS = 5_000;
+const MAX_ACCEPTED_REQUESTS_PER_SESSION = 128;
 const DEFAULT_BOT_ACTION_MIN_DELAY_MS = 2_000;
 const DEFAULT_BOT_ACTION_MAX_DELAY_MS = 3_000;
 
@@ -250,14 +255,11 @@ export class RoomSessionManager {
   private readonly now: () => number;
   private readonly rng: Rng;
   private readonly botStepLimit: number;
-  private readonly autoNextRoundDelayMs: number;
   private readonly botActionMinDelayMs: number;
   private readonly botActionMaxDelayMs: number;
   private readonly sessions = new Map<string, SessionRecord>();
   private sessionCounter = 0;
   private processingBots = false;
-  private autoNextRoundTimer?: ReturnType<typeof setTimeout>;
-  private autoNextRoundRevision?: number;
   private botActionTimer?: ReturnType<typeof setTimeout>;
   private botActionKey?: string;
   private readonly lastReactionAtByPlayer = new Map<string, number>();
@@ -273,15 +275,12 @@ export class RoomSessionManager {
       this.now = nowOrOptions;
       this.rng = rng ?? (() => Math.random());
       this.botStepLimit = DEFAULT_BOT_STEP_LIMIT;
-      this.autoNextRoundDelayMs = DEFAULT_AUTO_NEXT_ROUND_DELAY_MS;
       this.botActionMinDelayMs = DEFAULT_BOT_ACTION_MIN_DELAY_MS;
       this.botActionMaxDelayMs = DEFAULT_BOT_ACTION_MAX_DELAY_MS;
     } else {
       this.now = nowOrOptions.now ?? (() => Date.now());
       this.rng = nowOrOptions.rng ?? (() => Math.random());
       this.botStepLimit = nowOrOptions.botStepLimit ?? DEFAULT_BOT_STEP_LIMIT;
-      this.autoNextRoundDelayMs =
-        nowOrOptions.autoNextRoundDelayMs ?? DEFAULT_AUTO_NEXT_ROUND_DELAY_MS;
       this.botActionMinDelayMs =
         nowOrOptions.botActionMinDelayMs ?? DEFAULT_BOT_ACTION_MIN_DELAY_MS;
       this.botActionMaxDelayMs =
@@ -291,6 +290,22 @@ export class RoomSessionManager {
 
   get activeSessionCount(): number {
     return this.sessions.size;
+  }
+
+  async joinRoom(input: JoinRoomInput): Promise<LifecycleResult> {
+    return this.runExclusive(async () => {
+      const result = await this.authority.joinRoom(input);
+      if (!result.ok) return result;
+
+      // PIN reclaim rotates the credential. Retire its previous connection in
+      // the same queue as gameplay, before it can act on the reclaimed seat.
+      if (result.reclaimed && result.playerId) {
+        this.replaceOpenSessionsForPlayer(result.playerId);
+      }
+      await this.broadcastState("CONNECTED", result.state);
+      await this.processBots();
+      return result;
+    });
   }
 
   async connectSocket(params: {
@@ -312,7 +327,7 @@ export class RoomSessionManager {
   }): Promise<SessionConnectResult> {
     params.socket.accept?.();
 
-    const connected = await this.authority.connectPlayer(
+    let connected = await this.authority.connectPlayer(
       params.playerId,
       params.reconnectToken,
       params.identity,
@@ -329,6 +344,16 @@ export class RoomSessionManager {
       return connected;
     }
 
+    if (connected.state.phase === "ResolvingRound") {
+      const recovered = await this.authority.advanceToNextRound(
+        params.now ?? this.now(),
+        this.rng,
+      );
+      if (recovered.ok) {
+        connected = { ...connected, state: recovered.state };
+      }
+    }
+
     this.replaceOpenSessionsForPlayer(params.playerId);
 
     this.sessionCounter += 1;
@@ -337,6 +362,7 @@ export class RoomSessionManager {
       playerId: params.playerId,
       socket: params.socket,
       identity: params.identity,
+      acceptedRequests: new Map(),
     };
 
     this.sessions.set(session.id, session);
@@ -352,7 +378,6 @@ export class RoomSessionManager {
     await this.broadcastState("CONNECTED", connected.state, {
       excludeSessionId: session.id,
     });
-    this.scheduleAutoNextRound(connected.state);
     await this.processBots();
 
     return {
@@ -374,7 +399,13 @@ export class RoomSessionManager {
         await this.handleSocketMessageInternal(session, raw, now);
       } catch {
         if (!this.sessions.has(session.id)) return;
-        await this.rejectWithCurrentView(session, undefined, "INTERNAL_ERROR");
+        await this.rejectWithCurrentView(
+          session,
+          session.activeRequest?.requestId,
+          "INTERNAL_ERROR",
+        );
+      } finally {
+        session.activeRequest = undefined;
       }
     });
   }
@@ -392,6 +423,34 @@ export class RoomSessionManager {
         latestStateRevision: await this.latestRevision(),
       });
       return;
+    }
+
+    if (message.type !== "PING" && message.type !== "REQUEST_SYNC") {
+      const requestId = messageRequestId(message)!;
+      const fingerprint = JSON.stringify(message);
+      const accepted = session.acceptedRequests.get(requestId);
+      if (accepted !== undefined) {
+        if (accepted !== fingerprint) {
+          await this.rejectWithCurrentView(
+            session,
+            requestId,
+            "REQUEST_ID_REUSED",
+          );
+        } else {
+          const view = await this.privateView(session.playerId);
+          if (view) {
+            this.send(session, {
+              type: "ROOM_UPDATED",
+              reason: "ACTION_ACCEPTED",
+              requestId,
+              acceptedByPlayerId: session.playerId,
+              view,
+            });
+          }
+        }
+        return;
+      }
+      session.activeRequest = { requestId, fingerprint };
     }
 
     switch (message.type) {
@@ -556,7 +615,6 @@ export class RoomSessionManager {
     const result = await this.authority.disconnectPlayer(session.playerId, now);
     if (result.ok) {
       await this.broadcastState("DISCONNECTED", result.state);
-      this.scheduleAutoNextRound(result.state);
       await this.processBots();
     }
   }
@@ -595,7 +653,6 @@ export class RoomSessionManager {
     if (result.state.phase === "Abandoned") {
       await this.authority.deleteRoom?.();
     }
-    this.scheduleAutoNextRound(result.state);
     await this.processBots();
   }
 
@@ -682,7 +739,7 @@ export class RoomSessionManager {
     await this.handleActionResult(
       session,
       envelope.requestId,
-      await this.authority.submitClaim(envelope, now),
+      await this.authority.submitClaim(envelope, now, this.rng),
     );
   }
 
@@ -704,7 +761,7 @@ export class RoomSessionManager {
     await this.handleActionResult(
       session,
       envelope.requestId,
-      await this.authority.callBullshit(envelope, now),
+      await this.authority.callBullshit(envelope, now, this.rng),
     );
   }
 
@@ -728,7 +785,6 @@ export class RoomSessionManager {
       acceptedByPlayerId: session.playerId,
       roundResult: result.roundResult,
     });
-    this.scheduleAutoNextRound(result.state);
     await this.processBots();
   }
 
@@ -751,7 +807,6 @@ export class RoomSessionManager {
       requestId,
       acceptedByPlayerId: session.playerId,
     });
-    this.scheduleAutoNextRound(result.state);
     await this.processBots();
   }
 
@@ -1017,7 +1072,6 @@ export class RoomSessionManager {
         acceptedByPlayerId: decision.botPlayerId,
         roundResult: result.roundResult,
       });
-      this.scheduleAutoNextRound(result.state);
       shouldContinue = result.state.phase === "RoundActive";
     } finally {
       this.processingBots = false;
@@ -1049,6 +1103,7 @@ export class RoomSessionManager {
           },
         },
         now,
+        this.rng,
       );
     }
 
@@ -1063,6 +1118,7 @@ export class RoomSessionManager {
           payload: {},
         },
         now,
+        this.rng,
       );
     }
 
@@ -1073,72 +1129,24 @@ export class RoomSessionManager {
     });
   }
 
-  private clearAutoNextRound(): void {
-    if (this.autoNextRoundTimer !== undefined) {
-      clearTimeout(this.autoNextRoundTimer);
-    }
-    this.autoNextRoundTimer = undefined;
-    this.autoNextRoundRevision = undefined;
-  }
-
-  private scheduleAutoNextRound(state: GameState): void {
-    if (state.phase !== "ResolvingRound") {
-      this.clearAutoNextRound();
-      return;
-    }
-
-    if (
-      this.autoNextRoundRevision === state.stateRevision &&
-      this.autoNextRoundTimer !== undefined
-    ) {
-      return;
-    }
-
-    this.clearAutoNextRound();
-    this.autoNextRoundRevision = state.stateRevision;
-    this.autoNextRoundTimer = setTimeout(() => {
-      void this.runExclusive(() =>
-        this.advanceAutomaticallyFromRoundReview(state.stateRevision),
-      );
-    }, this.autoNextRoundDelayMs);
-
-    const timer = this.autoNextRoundTimer as ReturnType<typeof setTimeout> & {
-      unref?: () => void;
-    };
-    timer.unref?.();
-  }
-
-  private async advanceAutomaticallyFromRoundReview(
-    expectedRevision: number,
-  ): Promise<void> {
-    this.autoNextRoundTimer = undefined;
-    this.autoNextRoundRevision = undefined;
-
-    const state = await this.authority.getState();
-    if (
-      !state ||
-      state.phase !== "ResolvingRound" ||
-      state.stateRevision !== expectedRevision
-    ) {
-      return;
-    }
-
-    const result = await this.authority.advanceToNextRound(
-      this.now(),
-      this.rng,
-    );
-    if (!result.ok) {
-      return;
-    }
-
-    await this.broadcastState("AUTO_NEXT_ROUND", result.state, {
-      requestId: `auto-next-round:${expectedRevision}`,
-    });
-    this.scheduleAutoNextRound(result.state);
-    await this.processBots();
-  }
-
   private send(session: SessionRecord, message: RoomServerMessage): boolean {
+    if (
+      session.activeRequest &&
+      message.type === "ROOM_UPDATED" &&
+      message.reason === "ACTION_ACCEPTED" &&
+      message.acceptedByPlayerId === session.playerId &&
+      message.requestId === session.activeRequest.requestId
+    ) {
+      session.acceptedRequests.set(
+        session.activeRequest.requestId,
+        session.activeRequest.fingerprint,
+      );
+      if (session.acceptedRequests.size > MAX_ACCEPTED_REQUESTS_PER_SESSION) {
+        session.acceptedRequests.delete(
+          session.acceptedRequests.keys().next().value!,
+        );
+      }
+    }
     const sent = this.sendSocket(session.socket, message);
     if (!sent && this.sessions.has(session.id)) {
       session.socket.close?.(1011, "SEND_FAILED");

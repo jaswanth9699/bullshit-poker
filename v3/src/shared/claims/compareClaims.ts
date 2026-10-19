@@ -1,15 +1,16 @@
-import { RANKS, rankValue, type Rank } from "../cards/cardTypes.ts";
+import { RANKS, SUITS, rankValue, type Rank } from "../cards/cardTypes.ts";
 import {
   FLUSH_HIGH_RANKS,
   HAND_CLASS_VALUE,
+  HAND_TYPES,
   STRAIGHT_FLUSH_HIGH_RANKS,
   STRAIGHT_HIGH_RANKS,
   type Claim,
 } from "./claimTypes.ts";
 
 function assertRank(rank: Rank | undefined, label: string): Rank {
-  if (!rank) {
-    throw new Error(`Missing ${label}`);
+  if (!rank || !RANKS.includes(rank)) {
+    throw new Error(`Invalid ${label}`);
   }
   return rank;
 }
@@ -62,7 +63,19 @@ export function normalizeClaimShape(claim: Claim): Claim {
 }
 
 export function validateClaimShape(claim: Claim): void {
+  if (!HAND_TYPES.includes(claim.handType)) {
+    throw new Error("Unknown claim hand type");
+  }
   const normalized = normalizeClaimShape(claim);
+  if (normalized.suit !== undefined && !SUITS.includes(normalized.suit)) {
+    throw new Error("Invalid claim suit");
+  }
+  if (normalized.primaryRank !== undefined) {
+    assertRank(normalized.primaryRank, "primaryRank");
+  }
+  if (normalized.secondaryRank !== undefined) {
+    assertRank(normalized.secondaryRank, "secondaryRank");
+  }
 
   switch (normalized.handType) {
     case "HIGH_CARD":
@@ -167,6 +180,8 @@ function tieBreakValues(claim: Claim): number[] {
 export function compareClaims(left: Claim, right: Claim): -1 | 0 | 1 {
   const normalizedLeft = normalizeClaimShape(left);
   const normalizedRight = normalizeClaimShape(right);
+  validateClaimShape(normalizedLeft);
+  validateClaimShape(normalizedRight);
   const leftClass = HAND_CLASS_VALUE[normalizedLeft.handType];
   const rightClass = HAND_CLASS_VALUE[normalizedRight.handType];
 

@@ -374,3 +374,55 @@ test("bot decision does not change when only opponent hidden cards change", () =
 
   assert.deepEqual(decisionA, decisionB);
 });
+
+test("bot probability keeps departed players' public card counts in the frozen round pool", () => {
+  const beforeLeave = stateWithBot({
+    botCards: ["10", "J", "Q", "K"].map((rank) =>
+      createCard(rank as "10" | "J" | "Q" | "K", "S"),
+    ),
+    currentClaim: {
+      id: "royal-claim",
+      handType: "ROYAL_FLUSH",
+      suit: "S",
+      playerId: "human",
+      sequence: 1,
+    },
+  });
+  beforeLeave.players.push(
+    player("departing", 2, [
+      createCard("3", "D"),
+      createCard("4", "D"),
+      createCard("5", "D"),
+      createCard("6", "D"),
+      createCard("7", "D"),
+    ]),
+  );
+  beforeLeave.roundParticipantIds = beforeLeave.players.map(({ id }) => id);
+  const baseline = decideBotAction(beforeLeave, "bot");
+  assert.equal(baseline.type, "CALL_BULLSHIT");
+  if (baseline.type !== "CALL_BULLSHIT") return;
+  assert.ok(baseline.estimatedTruth > 0);
+
+  const afterLeave = structuredClone(beforeLeave);
+  afterLeave.players[2].leftAt = 1_000;
+  afterLeave.players[2].connected = false;
+  const departed = decideBotAction(afterLeave, "bot");
+  assert.equal(departed.type, "CALL_BULLSHIT");
+  if (departed.type !== "CALL_BULLSHIT") return;
+  assert.equal(departed.estimatedTruth, baseline.estimatedTruth);
+
+  // Historical seats from earlier rounds do not expand this round's pool.
+  afterLeave.players.push(
+    player("old-seat", 3, [], { cardCount: 5, leftAt: 10, eliminated: true }),
+  );
+  // Even the departed hand's private contents/length must be irrelevant.
+  afterLeave.players[2].roundCards = [createCard("A", "S")];
+  assert.deepEqual(decideBotAction(afterLeave, "bot"), departed);
+
+  const legacy = structuredClone(afterLeave);
+  delete legacy.roundParticipantIds;
+  const legacyDecision = decideBotAction(legacy, "bot");
+  assert.equal(legacyDecision.type, "CALL_BULLSHIT");
+  if (legacyDecision.type !== "CALL_BULLSHIT") return;
+  assert.ok(legacyDecision.estimatedTruth < departed.estimatedTruth);
+});

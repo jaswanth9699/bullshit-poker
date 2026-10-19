@@ -69,7 +69,7 @@ function stateWithBot(params: {
   };
 }
 
-test("bot opens with the lowest truthful claim from its own hand", () => {
+test("bot opens with a strong truthful claim from its own hand", () => {
   const decision = decideBotAction(
     stateWithBot({
       botCards: [createCard("A", "S")]
@@ -79,9 +79,57 @@ test("bot opens with the lowest truthful claim from its own hand", () => {
 
   assert.equal(decision.type, "SUBMIT_CLAIM");
   if (decision.type !== "SUBMIT_CLAIM") return;
-  assert.equal(decision.reason, "OPEN_WITH_LOWEST_TRUTHFUL_CLAIM");
+  assert.equal(decision.reason, "OPEN_WITH_STRONG_TRUTHFUL_CLAIM");
   assert.deepEqual(decision.claim, { handType: "HIGH_CARD", primaryRank: "A" });
   assert.equal(decision.estimatedTruth, 1);
+});
+
+test("bot chooses the strongest high-card proof instead of underclaiming", () => {
+  const decision = decideBotAction(
+    stateWithBot({
+      botCards: [createCard("K", "H"), createCard("A", "S")]
+    }),
+    "bot"
+  );
+
+  assert.equal(decision.type, "SUBMIT_CLAIM");
+  if (decision.type !== "SUBMIT_CLAIM") return;
+  assert.equal(decision.reason, "OPEN_WITH_STRONG_TRUTHFUL_CLAIM");
+  assert.deepEqual(decision.claim, { handType: "HIGH_CARD", primaryRank: "A" });
+});
+
+test("bot opens trips as trips instead of only high card", () => {
+  const decision = decideBotAction(
+    stateWithBot({
+      botCards: [createCard("A", "S"), createCard("A", "H"), createCard("A", "D")]
+    }),
+    "bot"
+  );
+
+  assert.equal(decision.type, "SUBMIT_CLAIM");
+  if (decision.type !== "SUBMIT_CLAIM") return;
+  assert.equal(decision.reason, "OPEN_WITH_STRONG_TRUTHFUL_CLAIM");
+  assert.deepEqual(decision.claim, { handType: "THREE_OF_A_KIND", primaryRank: "A" });
+});
+
+test("bot opens full house with the actual strong combo", () => {
+  const decision = decideBotAction(
+    stateWithBot({
+      botCards: [
+        createCard("A", "S"),
+        createCard("A", "H"),
+        createCard("A", "D"),
+        createCard("K", "S"),
+        createCard("K", "H")
+      ]
+    }),
+    "bot"
+  );
+
+  assert.equal(decision.type, "SUBMIT_CLAIM");
+  if (decision.type !== "SUBMIT_CLAIM") return;
+  assert.equal(decision.reason, "OPEN_WITH_STRONG_TRUTHFUL_CLAIM");
+  assert.deepEqual(decision.claim, { handType: "FULL_HOUSE", primaryRank: "A", secondaryRank: "K" });
 });
 
 test("bot raises with a truthful higher claim when it can prove one from its own cards", () => {
@@ -95,11 +143,11 @@ test("bot raises with a truthful higher claim when it can prove one from its own
 
   assert.equal(decision.type, "SUBMIT_CLAIM");
   if (decision.type !== "SUBMIT_CLAIM") return;
-  assert.equal(decision.reason, "RAISE_WITH_TRUTHFUL_CLAIM");
+  assert.equal(decision.reason, "RAISE_WITH_STRONG_TRUTHFUL_CLAIM");
   assert.deepEqual(decision.claim, { handType: "HIGH_CARD", primaryRank: "A" });
 });
 
-test("bot raises instead of calling when a higher claim is provable", () => {
+test("bot calls instead of raising when the current claim is nearly impossible", () => {
   const decision = decideBotAction(
     stateWithBot({
       botCards: [createCard("A", "S"), createCard("A", "H")],
@@ -110,23 +158,69 @@ test("bot raises instead of calling when a higher claim is provable", () => {
     { callBullshitAtOrBelow: 1, raiseBluffMinimumEstimate: 0.38, simulationSamples: 16 }
   );
 
-  assert.equal(decision.type, "SUBMIT_CLAIM");
-  if (decision.type !== "SUBMIT_CLAIM") return;
-  assert.equal(decision.reason, "RAISE_WITH_TRUTHFUL_CLAIM");
-  assert.deepEqual(decision.claim, { handType: "PAIR", primaryRank: "A" });
+  assert.equal(decision.type, "CALL_BULLSHIT");
+  if (decision.type !== "CALL_BULLSHIT") return;
+  assert.equal(decision.reason, "CALL_LOW_CONFIDENCE_CLAIM");
 });
 
-test("off-turn bot waits instead of sniping when it has a truthful future raise", () => {
+test("off-turn bot waits instead of sniping a plausible claim when it has a truthful future raise", () => {
   const decision = decideBotAction(
     stateWithBot({
       botCards: [createCard("A", "S"), createCard("A", "H")],
-      currentClaim: { id: "claim-1", handType: "PAIR", primaryRank: "K", playerId: "human", sequence: 1 },
+      otherCards: [
+        createCard("2", "D"),
+        createCard("3", "D"),
+        createCard("4", "D"),
+        createCard("5", "D"),
+        createCard("6", "D")
+      ],
+      currentClaim: { id: "claim-1", handType: "HIGH_CARD", primaryRank: "K", playerId: "human", sequence: 1 },
       currentTurnPlayerId: "human"
     }),
     "bot"
   );
 
   assert.equal(decision.type, "WAIT");
+});
+
+test("bot can choose a bold unsupported bluff under an aggressive dynamic blend", () => {
+  const decision = decideBotAction(
+    stateWithBot({
+      botCards: [createCard("A", "S"), createCard("4", "H")],
+      otherCards: [
+        createCard("2", "D"),
+        createCard("3", "D"),
+        createCard("5", "D"),
+        createCard("6", "D"),
+        createCard("7", "D")
+      ],
+      currentClaim: { id: "claim-1", handType: "HIGH_CARD", primaryRank: "K", playerId: "human", sequence: 1 },
+      currentTurnPlayerId: "bot"
+    }),
+    "bot",
+    {
+      callBullshitAtOrBelow: 0,
+      raiseBluffMinimumEstimate: 0.1,
+      simulationSamples: 64,
+      strategyOverride: {
+        aggression: 1,
+        deception: 1,
+        trap: 0,
+        skepticism: 0,
+        opportunism: 1,
+        chaos: 1,
+        survival: 0,
+        pressure: 1
+      }
+    }
+  );
+
+  assert.equal(decision.type, "SUBMIT_CLAIM");
+  if (decision.type !== "SUBMIT_CLAIM") return;
+  assert.equal(decision.reason, "RAISE_WITH_PRESSURE_BLUFF");
+  assert.notEqual(decision.estimatedTruth, 1);
+  assert.ok(decision.estimatedTruth > 0);
+  assert.ok(["FLUSH", "THREE_OF_A_KIND", "STRAIGHT", "FULL_HOUSE"].includes(decision.claim.handType));
 });
 
 test("off-turn bot still calls a nearly impossible claim without a truthful future raise", () => {

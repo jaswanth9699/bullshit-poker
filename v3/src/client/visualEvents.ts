@@ -106,6 +106,14 @@ export function deriveVisualEvents(
   previous: PrivateGameView | null,
   next: PrivateGameView,
 ): VisualEvent[] {
+  if (
+    previous?.roomId === next.roomId &&
+    (next.stateRevision < previous.stateRevision ||
+      (next.stateRevision === previous.stateRevision &&
+        (next.socialRevision ?? 0) <= (previous.socialRevision ?? 0)))
+  ) {
+    return [];
+  }
   const matchId = next.matchId ?? next.roomId;
   const base = {
     matchId,
@@ -216,7 +224,14 @@ class VisualEventBus {
     events.forEach((event) => {
       if (this.deliveredIds.has(event.id)) return;
       this.deliveredIds.add(event.id);
-      this.listeners.forEach((listener) => listener(event));
+      this.listeners.forEach((listener) => {
+        try {
+          listener(event);
+        } catch {
+          // A decorative subscriber cannot interrupt authoritative room updates.
+          this.listeners.delete(listener);
+        }
+      });
     });
     if (this.deliveredIds.size > 512) {
       const newest = [...this.deliveredIds].slice(-256);

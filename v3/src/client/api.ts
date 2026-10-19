@@ -137,7 +137,9 @@ export function callBullshitHttp(
 export function connectRoomSocket(
   credential: SeatCredential,
   onMessage: (message: RoomServerMessage) => void,
-  onStatus: (status: "connecting" | "open" | "closed" | "error") => void,
+  onStatus: (
+    status: "connecting" | "open" | "closed" | "error" | "replaced",
+  ) => void,
 ): WebSocket {
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
   const url = new URL(
@@ -151,7 +153,13 @@ export function connectRoomSocket(
     `reconnect.${credential.reconnectToken}`,
   ]);
   socket.addEventListener("open", () => onStatus("open"));
-  socket.addEventListener("close", () => onStatus("closed"));
+  socket.addEventListener("close", (event) =>
+    onStatus(
+      event.code === 4000 && event.reason === "SESSION_REPLACED"
+        ? "replaced"
+        : "closed",
+    ),
+  );
   socket.addEventListener("error", () => onStatus("error"));
   socket.addEventListener("message", (event) => {
     try {
@@ -170,6 +178,10 @@ export function sendRoomMessage(
   if (!socket || socket.readyState !== WebSocket.OPEN) {
     return false;
   }
-  socket.send(JSON.stringify(message));
-  return true;
+  try {
+    socket.send(JSON.stringify(message));
+    return true;
+  } catch {
+    return false;
+  }
 }

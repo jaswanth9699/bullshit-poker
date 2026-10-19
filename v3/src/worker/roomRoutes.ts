@@ -38,15 +38,18 @@ export type RoomRouteAuthority = {
   submitClaim(
     envelope: ClientActionEnvelope<SubmitClaimPayload>,
     now: number,
+    rng: Rng,
   ): Promise<ServerActionResult>;
   callBullshit(
     envelope: ClientActionEnvelope<CallBullshitPayload>,
     now: number,
+    rng: Rng,
   ): Promise<ServerActionResult>;
 };
 
 export type RoomRouteContext = {
   authority: RoomRouteAuthority;
+  joinRoom?: RoomRouteAuthority["joinRoom"];
   identity: RoomIdentityProvider;
   now: () => number;
   rng: Rng;
@@ -163,12 +166,15 @@ export async function handleRoomHttpRequest(
         return errorResponse("INVALID_JOIN_ROOM_REQUEST", 400);
       }
 
-      const result = await context.authority.joinRoom({
+      const input: JoinRoomInput = {
         name,
         pin,
         now,
         identity: context.identity,
-      });
+      };
+      const result = await (context.joinRoom
+        ? context.joinRoom(input)
+        : context.authority.joinRoom(input));
       return jsonResponse(
         lifecycleWireResult(result, result.ok ? result.playerId : undefined),
       );
@@ -247,7 +253,7 @@ export async function handleRoomHttpRequest(
         body.envelope as ClientActionEnvelope<SubmitClaimPayload>;
       return jsonResponse(
         actionWireResult(
-          await context.authority.submitClaim(envelope, now),
+          await context.authority.submitClaim(envelope, now, context.rng),
           envelope?.playerId,
         ),
       );
@@ -258,7 +264,7 @@ export async function handleRoomHttpRequest(
         body.envelope as ClientActionEnvelope<CallBullshitPayload>;
       return jsonResponse(
         actionWireResult(
-          await context.authority.callBullshit(envelope, now),
+          await context.authority.callBullshit(envelope, now, context.rng),
           envelope?.playerId,
         ),
       );

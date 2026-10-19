@@ -21,22 +21,22 @@ export const VISUAL_QUALITY_CONFIG: Record<
   VisualQualityConfig
 > = {
   full: {
-    maxDevicePixelRatio: 1.75,
+    maxDevicePixelRatio: 2,
     antialias: true,
     textureAnisotropy: 4,
     floatingAmplitude: 0.16,
     pointerInfluence: 1,
   },
   balanced: {
-    maxDevicePixelRatio: 1.25,
-    antialias: false,
+    maxDevicePixelRatio: 1.75,
+    antialias: true,
     textureAnisotropy: 2,
     floatingAmplitude: 0.1,
     pointerInfluence: 0.7,
   },
   reduced: {
-    maxDevicePixelRatio: 1,
-    antialias: false,
+    maxDevicePixelRatio: 1.75,
+    antialias: true,
     textureAnisotropy: 1,
     floatingAmplitude: 0,
     pointerInfluence: 0,

@@ -159,19 +159,31 @@ export class RoomAuthority {
   async submitClaim(
     envelope: ClientActionEnvelope<SubmitClaimPayload>,
     now: number,
+    rng: Rng,
   ): Promise<ServerActionResult> {
-    return this.apply((state) => applySubmitClaim(state, envelope, now));
+    return this.applyAction(
+      (state) => applySubmitClaim(state, envelope, now),
+      now,
+      rng,
+    );
   }
 
   async callBullshit(
     envelope: ClientActionEnvelope<CallBullshitPayload>,
     now: number,
+    rng: Rng,
   ): Promise<ServerActionResult> {
-    return this.apply((state) => applyCallBullshit(state, envelope, now));
+    return this.applyAction(
+      (state) => applyCallBullshit(state, envelope, now),
+      now,
+      rng,
+    );
   }
 
-  private async apply(
+  private async applyAction(
     reducer: (state: GameState) => ServerActionResult,
+    now: number,
+    rng: Rng,
   ): Promise<ServerActionResult> {
     return this.runExclusive(async () => {
       const state = await this.store.getState();
@@ -183,11 +195,27 @@ export class RoomAuthority {
         };
       }
 
-      const result = reducer(state);
-      if (result.ok) {
-        await this.store.putState(result.state);
+      const reduced = reducer(state);
+      if (!reduced.ok) return reduced;
+
+      let result = reduced;
+      if (reduced.roundResult && reduced.state.phase === "ResolvingRound") {
+        const advanced = advanceToNextRound(reduced.state, { now, rng });
+        if (!advanced.ok) {
+          return {
+            ok: false,
+            code: "INTERNAL_ERROR",
+            latestStateRevision: state.stateRevision,
+          };
+        }
+        result = {
+          ...reduced,
+          state: advanced.state,
+          newStateRevision: advanced.state.stateRevision,
+        };
       }
 
+      await this.store.putState(result.state);
       return result;
     });
   }

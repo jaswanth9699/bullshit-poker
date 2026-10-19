@@ -214,9 +214,18 @@ export function estimateClaimTruthForBot(
   );
 }
 
-function activeTableCardCount(state: GameState): number {
+function roundTableCardCount(state: GameState): number {
+  // A departing player's dealt cards remain in the frozen round pool. Use only
+  // public participant IDs/card counts; never inspect another player's hand.
+  const participantIds = state.roundParticipantIds
+    ? new Set(state.roundParticipantIds)
+    : undefined;
   return state.players
-    .filter((player) => !player.eliminated && player.leftAt === undefined)
+    .filter((player) =>
+      participantIds
+        ? participantIds.has(player.id)
+        : !player.eliminated && player.leftAt === undefined,
+    )
     .reduce((sum, player) => sum + player.cardCount, 0);
 }
 
@@ -859,7 +868,7 @@ export function decideBotAction(
 
   const currentClaim = state.currentClaim;
   const canCall = currentClaimCanBeCalled(state, bot);
-  const totalTableCards = activeTableCardCount(state);
+  const totalTableCards = roundTableCardCount(state);
   const claimEstimate = currentClaim
     ? estimateClaimTruthBySimulation(
         currentClaim,

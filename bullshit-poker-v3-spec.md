@@ -1,11 +1,77 @@
 # BullShit Poker V3 Specification
 
-Status: Radical V3 interface replacement deployed and verified on the isolated V3 Worker
+Status: V3 reliability/responsive recovery validated and deployed to the isolated V3 Worker with user approval (see `POKER_V3_HANDOFF.md`)
 Working branch: `codex/v3`  
 Development Worker: `bullshit-poker-v3`  
 Development URL: `https://bullshit-poker-v3.every-day.workers.dev/`  
-Active V3 deployment version: `17b730eb-e7bd-40f2-ada0-4f64e31aa760`
+Active V3 deployment version: `09bad4d4-828c-4edd-a653-36da0946bb30`
+Previous V3 version / rollback reference: `fd52b4ef-476e-47bc-9379-e9798cbe861c`
 Protected production URLs: `bullshit-poker.every-day.workers.dev` and `bullshit-poker-v2.every-day.workers.dev`
+
+### September 12 classic main-page composition (current)
+
+- Restore the original cardroom background, centered gradient/white title, indicator, tagline and wide-screen edge-card composition shown in the user's reference.
+- Animate all four outer cards with staggered floating/tilting motion on desktop and mobile. Scale/inset them to avoid title/action collisions; Reduced Effects/system Reduced Motion keep them still.
+- Use cyan-to-violet Create and violet-to-pink Join gradients with dark readable text.
+- Keep the current V3 animated sculpture in the center and the V3 Create/Join buttons at the bottom. Fit the stage between heading and actions on normal phone/desktop heights; short landscape layouts may scroll.
+- Preserve the V3 entry forms, automatic connection behavior, continuous animation during entry, reduced motion and fallback. Keep replay and explanatory paragraphs absent.
+- This supersedes the earlier split-column main-page composition. Preserve the oval lobby, game/winner interfaces and V1/V2.
+
+### September 13 classic lobby composition (current)
+
+- Build on the older lobby's cyan/lilac/pink convention: introduction, centered oval table, compact ruled player manifest. Wide screens use three columns; intermediate widths use two and phones stack the zones.
+- Keep the diamond roster markers, clear readiness labels, full player names and host controls. Match the roster to the restored dark palette, superseding its September 11 light background.
+- Add slow lighting that travels around the oval, gentle seat motion and a short roster arrival transition. Honor Reduced Effects and system reduced motion.
+- Preserve the small seat-aligned names, recognizable center playing cards, single invite action and authoritative lobby behavior. Do not alter the main page or game table.
+
+### September 11 oval lobby and table names (geometry and behavior retained)
+
+- Use a dark lobby with an oval 3D table and a separate containment envelope. Keep the game table geometry unchanged.
+- Show small, upright names directly beneath each projected seat, resolving actual collisions without distant guide lines. Full names remain in the roster when narrow table labels ellipsize.
+- Show recognizable decorative face-up cards in the center, replacing the abstract animated stack. These are artwork, not a dealt hand.
+- Restore the earlier ruled player list with diamond markers, aligned readiness labels and host removal controls. Keep one full roster; its palette follows the September 13 update above.
+- Keep one Invite friends action, accessible readiness progress derived from room state, visible mobile action labels and existing authority gates.
+- Preserve reduced motion, WebGL fallback, game/winner interfaces and all V1/V2 behavior.
+
+### September 11 continuous midnight sculpture (composition superseded above)
+
+This user-approved follow-up supersedes the earlier replay control and pause-during-entry behavior.
+
+- Keep the ink/navy stage, soft blue ambient light, bright paper fan faces, minimal title/kicker/tagline and yellow Create action. Remove Replay and the CSS-generated “Identity channel” badge entirely.
+- Run the eased 16-second unfolding, suspended wave and gathering cycle continuously through Create Table and Join Room, including name/PIN entry. Pause only for hidden tabs, offscreen artwork, context loss or Reduced Effects/system Reduced Motion.
+- Four tapered diamond wakes follow the actual orbital card paths in one instanced draw. Slow complementary lighting reveals deck edges, with a pale inner arc visible against the dark stage. Full motion stays within the camera bounds.
+- Desktop forms replace the title column with a compact illuminated panel, leaving the sculpture unobstructed. Phones use an inset bottom panel and move the artwork up when entering. Form content scrolls within short viewports.
+- Reduced Effects/system Reduced Motion use a fixed open fan; WebGL fallback stays playable. Pointer response remains local and smoothly damped. No explanatory paragraphs, replay/reset controls or automatic full-screen reveal.
+- Preserve first-screen phone actions, accessible entry fields and existing create/join/PIN behavior. No gameplay, server authority, lobby/game theme or V1/V2 changes.
+
+### September 10 entry composition redesign (superseded)
+
+- Use a compact poker-club masthead, strong title hierarchy, short game introduction, live card poster, prominent Create/Join actions, and a three-step rules guide.
+- On phones the headline, artwork and actions occupy consecutive zones with small explicit gaps. Both action buttons must fit within the initial viewport at 320×760 through 430×932.
+- On desktop use a split text/art composition with a full-width rules strip. No artwork/text overlap; short landscape viewports may scroll normally.
+- The entry camera centers the full scene in its dedicated stage, with a larger deck and tighter orbit composition. Reduced Effects stays static; WebGL fallback shows a CSS card illustration.
+- Existing entry language, create/join/PIN steps, invite handling, server rules and game scenes remain unchanged.
+
+### September 10 animation clarity correction
+
+- Entry cards and orbit accents retain their original colors without foreground fog. Phone composition is centered and antialiased.
+- Table framing fits the platform, seat markers and animated claim fan with breathing room; scene zones provide enough height for readable cards on phone and desktop.
+- Table edges use visible mesh rails. Larger claim faces stay pointed at the viewer with bounded sway; they never continuously spin edge-on or backwards.
+- BullShit resolution has a short, visible expanding ring alongside the existing nonblocking result notification. It does not delay the next round.
+- Reduced Effects stops motion while retaining full scene contrast and readable card faces.
+- Automated checks cover high-DPI rendering, five-card readability/framing over time, narrow phones, desktop, and static Reduced Effects. Real-device frame time and cross-browser validation remain open.
+
+### Approved September 8 reliability and responsive update
+
+The recovered user approval supersedes earlier review-delay and manual reconnect descriptions:
+
+- Round resolution, complete frozen reveal, and immediate redeal form one serialized persisted transition. Legacy stored review-phase rooms recover when a player reconnects.
+- No next-round button/countdown or automatic blocking reveal. A brief nonblocking result notice appears; complete hands are available through deliberate Last Round/Final Reveal access.
+- Reactions expire three seconds after receipt. A newer reaction replaces the previous one; reconnect snapshots do not replay old effects.
+- Reconnection runs automatically in the background. No manual reconnect/refresh buttons. Only a server-accepted current connection can issue gameplay commands; replaced tabs relinquish the seat.
+- Invite links honor their own room instead of restoring another room's saved seat. Overlays are mutually exclusive, keyboard accessible, and invalidated when their authoritative action window changes.
+- Mobile uses separate turn, scene, timeline, action, and hand zones. Both scene cameras fit their full bounds to actual container dimensions. Remove intersecting decorative rails and `LIVE TABLE / 03` / `Private channel`; entry language uses `Live social bluffing`, `Start fresh`, and `Lock onto a room`.
+- The audit and checks cover race safety, reconnect/leave, malformed/stale/duplicate commands, accessibility, long content, responsive layouts and renderer fallback. Current evidence and remaining roadmap work are recorded in `POKER_V3_HANDOFF.md`.
 
 ## 1. Product Thesis
 
@@ -126,7 +192,7 @@ Motion is short, interruptible, and subordinate to input. The latest authoritati
 - An angular Three.js signal platform carries synchronized human, bot, ready, offline, and open-seat beacons.
 - Player names live in a collision-proof numbered signal matrix rather than on a fragile radial orbit.
 - A separate Signal Manifest provides full names, statuses, host identity, and host-only remove controls.
-- Ready, Add Bot, and Deal the Table remain in a stable command dock; share, settings, end game, reconnect, copy, and leave remain in the room strip.
+- Ready, Add Bot, and Deal the Table remain in a stable command dock; share, settings, end game, connection status, copy, and leave remain in the room strip. Reconnection is automatic.
 - Two, six, and ten seats are independently verified at 320 px mobile, 390 px mobile, tablet, laptop, and mobile landscape sizes.
 
 ### 5.3 Live Game: Bluff Arena
@@ -151,11 +217,12 @@ Motion is short, interruptible, and subordinate to input. The latest authoritati
 
 ### 5.5 Reveal and Last Round
 
-- Reveal is a full-screen proof mode with a fixed truth headline, caller, claimant, and complete frozen hands.
+- Reveal is a manually opened full-screen proof mode with a fixed truth headline, caller, claimant, and complete frozen hands. Immediate next-round play is accompanied by a nonblocking result notice.
 - Cards turn with actual red hearts/diamonds and dark spades/clubs.
 - The proof highlight explains which cards satisfy or fail the claim.
 - Last Round owns its viewport and scroll container, with a sticky close control and safe bottom padding.
 - Every player's complete frozen hand remains visible; no clipping or horizontal-only dependency.
+- The inspected result stays fixed while later live rounds advance; reopening selects the latest completed result.
 - Reduced Effects reveals immediately without motion.
 
 ### 5.6 Result and Rematch
@@ -167,7 +234,7 @@ Motion is short, interruptible, and subordinate to input. The latest authoritati
 ### 5.7 Complete V3 Interface Composition
 
 - V3 imports one dedicated visual system. No V1/V2 stylesheet participates in its cascade.
-- The shared room header is a flat command strip with a compact live signal, room code, card total, copy, share, settings, host end-game, reconnect, and leave actions.
+- The shared room header is a flat command strip with a compact connection signal, room code, card total, copy, share, settings, host end-game, and leave actions. Reconnection is automatic.
 - Entry, lobby, game, Claim Forge, reveal, settings, sharing, reactions, confirmation, and results each use a purpose-built full-screen or unframed composition.
 - The lobby uses a static signal matrix plus a semantic manifest; it never places long names on collision-prone radial coordinates.
 - The live game uses a horizontal player transmission rail, one full-width spatial arena, and a full-width private-hand shelf.
@@ -307,7 +374,7 @@ Three.js renderer + semantic React interface
 
 ### 12.1 Existing Compatibility Suite
 
-- All V2 engine, bot, room lifecycle, leave, reconnect, stale action, host transfer, end-game, and Worker tests run unchanged against V3.
+- V2 engine, bot, room lifecycle, leave, reconnect, stale action, host transfer, end-game, and Worker regression assertions remain the baseline. Authority/session tests that expected the superseded delayed review phase now assert immediate durable redeal; underlying pure rule tests retain their resolution-stage coverage.
 
 ### 12.2 Visual State Tests
 

@@ -9,6 +9,18 @@ import type {
   Suit,
 } from "../shared/index.ts";
 import { visualEventBus, type VisualEvent } from "./visualEvents.ts";
+import { layoutLobbySeatLabels } from "./lobbySeatLabels.ts";
+import {
+  fitSceneCamera,
+  LOBBY_SCENE_BOUNDS,
+  TABLE_SCENE_BOUNDS,
+} from "./sceneFraming.ts";
+import {
+  CLAIM_CARD_HEIGHT,
+  CLAIM_CARD_SPACING,
+  CLAIM_CARD_WIDTH,
+  poseClaim,
+} from "./sceneMotion.ts";
 import {
   browserVisualCapabilities,
   resolveVisualQuality,
@@ -28,7 +40,7 @@ type SeatRig = {
 
 type ClaimRig = {
   group: THREE.Group;
-  cards: Array<THREE.Mesh<THREE.PlaneGeometry, THREE.MeshStandardMaterial>>;
+  cards: Array<THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>>;
   textures: THREE.CanvasTexture[];
 };
 
@@ -131,7 +143,7 @@ function makeCardTexture(
     context.lineWidth = 3;
     context.strokeRect(27, 27, 202, 302);
     context.fillStyle = red ? "#d51f36" : "#111318";
-    context.font = "900 58px system-ui";
+    context.font = "900 68px system-ui";
     context.textAlign = "left";
     context.fillText(rank, 26, 65);
     context.font = "900 50px system-ui";
@@ -152,6 +164,10 @@ function seatColor(
 ): THREE.Color {
   if (player.eliminated) return new THREE.Color(0x6c747d);
   if (!player.connected && !player.isBot) return new THREE.Color(0xd51f36);
+  if (view.phase === "Lobby" && (player.isBot || player.ready))
+    return new THREE.Color(0x7dd3fc);
+  if (view.phase === "Lobby")
+    return new THREE.Color(player.id === view.viewerPlayerId ? 0xc4b5fd : 0xff8fb3);
   if (player.id === view.currentTurnPlayerId) return new THREE.Color(0xffd438);
   if (player.id === view.viewerPlayerId) return new THREE.Color(0x4169ff);
   return new THREE.Color(player.isBot ? 0xff5a36 : 0xf7f8f4);
@@ -172,7 +188,7 @@ function syncSeats(
     const angle =
       -Math.PI / 2 + (index / Math.max(players.length, 1)) * Math.PI * 2;
     const radiusX = variant === "lobby" ? 3.02 : 3.22;
-    const radiusZ = variant === "lobby" ? 2.28 : 2.38;
+    const radiusZ = variant === "lobby" ? 2.1 : 2.38;
     rig.group.position.set(
       Math.cos(angle) * radiusX,
       0.02,
@@ -188,7 +204,10 @@ function syncSeats(
           ? 0.2
           : 1.8;
     rig.ring.material.color.copy(color);
-    rig.ring.material.opacity = player.eliminated ? 0.18 : 0.62;
+    rig.ring.material.opacity = player.eliminated ? 0.35 : 1;
+    rig.group.scale.setScalar(
+      player.id === view.currentTurnPlayerId ? 1.18 : 1,
+    );
     rig.group.userData.playerId = player.id;
     rig.group.userData.baseY =
       player.id === view.startingPlayerId ? 0.16 : 0.04;
@@ -225,15 +244,11 @@ function syncClaim(
     const centered = index - (ranks.length - 1) / 2;
     const isBlock = claim.handType === "FULL_HOUSE";
     card.position.set(
-      centered * (isBlock ? 0.34 : 0.42),
-      Math.abs(centered) * 0.035,
-      isBlock && index >= 3 ? 0.24 : index * -0.018,
+      centered * CLAIM_CARD_SPACING,
+      Math.abs(centered) * 0.055,
+      index * 0.025,
     );
-    card.rotation.set(
-      -0.2,
-      centered * -0.045,
-      centered * (isBlock ? -0.04 : -0.085),
-    );
+    card.rotation.set(0, 0, centered * (isBlock ? -0.04 : -0.085));
   });
 }
 
@@ -321,7 +336,7 @@ export default function LivingTableScene(props: {
   useEffect(() => {
     syncRef.current(props.view);
     renderOnceRef.current();
-  }, [props.view]);
+  }, [props.view, sceneStatus]);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -360,10 +375,10 @@ export default function LivingTableScene(props: {
 
     const hemisphere = new THREE.HemisphereLight(0xffffff, 0x111318, 3.2);
     scene.add(hemisphere);
-    const cobaltLight = new THREE.PointLight(0x4169ff, 28, 13, 2);
+    const cobaltLight = new THREE.PointLight(props.variant === "lobby" ? 0x7dd3fc : 0x4169ff, 28, 13, 2);
     cobaltLight.position.set(-3.4, 4.5, 2.4);
     scene.add(cobaltLight);
-    const orangeLight = new THREE.PointLight(0xff5a36, 24, 12, 2);
+    const orangeLight = new THREE.PointLight(props.variant === "lobby" ? 0xec81cc : 0xff5a36, 24, 12, 2);
     orangeLight.position.set(3.6, 2.2, -2.4);
     scene.add(orangeLight);
     const whiteLight = new THREE.DirectionalLight(0xffffff, 3.6);
@@ -372,49 +387,71 @@ export default function LivingTableScene(props: {
 
     const table = new THREE.Group();
     scene.add(table);
-    const tableGeometry = new THREE.CylinderGeometry(3.5, 3.5, 0.18, 6);
+    const tableGeometry = new THREE.CylinderGeometry(
+      3.5,
+      3.5,
+      0.18,
+      props.variant === "lobby" ? 96 : 6,
+    );
     const tableMaterial = new THREE.MeshPhysicalMaterial({
-      color: 0x111318,
-      roughness: 0.42,
-      metalness: 0.38,
+      color: 0x192339,
+      roughness: 0.8,
+      metalness: 0.1,
       clearcoat: 0.56,
       clearcoatRoughness: 0.34,
-      transparent: true,
-      opacity: props.variant === "lobby" ? 0.78 : 0.62,
     });
     const tableTop = new THREE.Mesh(tableGeometry, tableMaterial);
     tableTop.position.y = -0.24;
-    tableTop.rotation.y = Math.PI / 6;
+    tableTop.rotation.y = props.variant === "lobby" ? 0 : Math.PI / 6;
+    if (props.variant === "lobby") tableTop.scale.z = 0.71;
     table.add(tableTop);
 
-    const edgeSourceGeometry = new THREE.CylinderGeometry(3.52, 3.52, 0.2, 6);
-    const edgeGeometry = new THREE.EdgesGeometry(edgeSourceGeometry, 10);
-    const edgeMaterial = new THREE.LineBasicMaterial({
-      color: 0x4169ff,
+    // Mesh rails retain thickness on high-DPI phones; WebGL lines are one pixel.
+    const edgePath = new THREE.CurvePath<THREE.Vector3>();
+    const edgeSegments = props.variant === "lobby" ? 96 : 6;
+    const edgePoints = Array.from({ length: edgeSegments }, (_, index) => {
+      const angle = (index / edgeSegments) * Math.PI * 2;
+      return new THREE.Vector3(
+        Math.cos(angle) * 3.52,
+        -0.13,
+        Math.sin(angle) * (props.variant === "lobby" ? 2.5 : 3.52),
+      );
+    });
+    edgePoints.forEach((point, index) =>
+      edgePath.add(
+        new THREE.LineCurve3(point, edgePoints[(index + 1) % edgeSegments]),
+      ),
+    );
+    const edgeGeometry = new THREE.TubeGeometry(edgePath, 60, 0.045, 6, true);
+    const edgeMaterial = new THREE.MeshBasicMaterial({
+      color: props.variant === "lobby" ? 0x7dd3fc : 0x648bff,
       transparent: true,
       opacity: 0.82,
     });
-    const tableEdge = new THREE.LineSegments(edgeGeometry, edgeMaterial);
-    tableEdge.position.y = -0.23;
-    tableEdge.rotation.y = Math.PI / 6;
+    const tableEdge = new THREE.Mesh(edgeGeometry, edgeMaterial);
     table.add(tableEdge);
 
-    const innerGeometry = new THREE.CylinderGeometry(1.43, 1.43, 0.025, 6);
+    const innerGeometry = new THREE.RingGeometry(
+      1.55,
+      1.6,
+      props.variant === "lobby" ? 96 : 6,
+    );
     const innerMaterial = new THREE.MeshBasicMaterial({
-      color: 0xff5a36,
+      color: props.variant === "lobby" ? 0xc4b5fd : 0xff5a36,
       transparent: true,
-      opacity: 0.2,
-      wireframe: true,
+      opacity: 0.7,
+      side: THREE.DoubleSide,
     });
     const innerPlatform = new THREE.Mesh(innerGeometry, innerMaterial);
     innerPlatform.position.y = -0.1;
-    innerPlatform.rotation.y = Math.PI / 6;
+    innerPlatform.rotation.x = -Math.PI / 2;
+    if (props.variant === "lobby") innerPlatform.scale.y = 0.71;
     table.add(innerPlatform);
 
     const networkMaterial = new THREE.LineBasicMaterial({
       color: 0xf7f8f4,
       transparent: true,
-      opacity: 0.13,
+      opacity: 0.18,
     });
     const networkGeometry = new THREE.BufferGeometry();
     const networkPoints: THREE.Vector3[] = [];
@@ -433,7 +470,7 @@ export default function LivingTableScene(props: {
     const network = new THREE.LineSegments(networkGeometry, networkMaterial);
     table.add(network);
 
-    const shockGeometry = new THREE.RingGeometry(0.92, 1.02, 6);
+    const shockGeometry = new THREE.RingGeometry(0.87, 1.02, 6);
     const shockMaterial = new THREE.MeshBasicMaterial({
       color: 0xff5a36,
       transparent: true,
@@ -446,8 +483,8 @@ export default function LivingTableScene(props: {
     shockRing.position.y = 0.06;
     table.add(shockRing);
 
-    const seatGeometry = new THREE.OctahedronGeometry(0.15, 0);
-    const seatRingGeometry = new THREE.RingGeometry(0.22, 0.255, 6);
+    const seatGeometry = new THREE.OctahedronGeometry(0.2, 0);
+    const seatRingGeometry = new THREE.RingGeometry(0.25, 0.32, 6);
     const seats: SeatRig[] = Array.from({ length: 10 }, () => {
       const group = new THREE.Group();
       const beaconMaterial = new THREE.MeshStandardMaterial({
@@ -473,12 +510,13 @@ export default function LivingTableScene(props: {
     const claimGroup = new THREE.Group();
     claimGroup.position.set(0, 0.42, props.variant === "game" ? 0.35 : 0);
     table.add(claimGroup);
-    const claimGeometry = new THREE.PlaneGeometry(0.7, 0.98);
+    const claimGeometry = new THREE.PlaneGeometry(
+      CLAIM_CARD_WIDTH,
+      CLAIM_CARD_HEIGHT,
+    );
     const claimCards = Array.from({ length: 5 }, () => {
-      const material = new THREE.MeshStandardMaterial({
+      const material = new THREE.MeshBasicMaterial({
         color: 0xffffff,
-        roughness: 0.35,
-        metalness: 0.05,
         side: THREE.DoubleSide,
       });
       const card = new THREE.Mesh(claimGeometry, material);
@@ -491,10 +529,80 @@ export default function LivingTableScene(props: {
       textures: [],
     };
 
+    const lobbyDeck = new THREE.Group();
+    lobbyDeck.visible = props.variant === "lobby";
+    const lobbyCardGeometry = new THREE.PlaneGeometry(0.85, 1.2);
+    const lobbyCardTextures: THREE.CanvasTexture[] = [];
+    const lobbyCardMaterials: THREE.MeshBasicMaterial[] = [];
+    if (props.variant === "lobby") {
+      (
+        [
+          ["Q", "C"],
+          ["K", "H"],
+          ["A", "S"],
+        ] as const
+      ).forEach(([rank, suit], index) => {
+        const texture = makeCardTexture(rank, suit, config.textureAnisotropy);
+        const material = new THREE.MeshBasicMaterial({
+          map: texture,
+          side: THREE.DoubleSide,
+        });
+        const card = new THREE.Mesh(lobbyCardGeometry, material);
+        card.rotation.set(-Math.PI / 2, 0, (index - 1) * -0.16);
+        card.position.set((index - 1) * 0.48, 0.04 + index * 0.015, 0);
+        lobbyCardTextures.push(texture);
+        lobbyCardMaterials.push(material);
+        lobbyDeck.add(card);
+      });
+    }
+    table.add(lobbyDeck);
+    let labelNodes = new Map<string, HTMLElement>();
+    let labelWidth = 1;
+    let labelHeight = 1;
+    const labelPoint = new THREE.Vector3();
+    const updateLabels = () => {
+      if (props.variant !== "lobby") return;
+      const anchors = seats
+        .filter((seat) => seat.group.visible)
+        .map((seat) => {
+          seat.group.getWorldPosition(labelPoint);
+          labelPoint.project(camera);
+          const id = String(seat.group.userData.playerId);
+          return {
+            id,
+            nameWidth: Math.max(
+              28,
+              Array.from(labelNodes.get(id)?.textContent ?? "").length *
+                Math.min(8.1, Math.max(6.9, window.innerWidth * 0.0062)) +
+                10,
+            ),
+            x: ((labelPoint.x + 1) * labelWidth) / 2,
+            y: ((1 - labelPoint.y) * labelHeight) / 2,
+          };
+        });
+      for (const position of layoutLobbySeatLabels(
+        anchors,
+        labelWidth,
+        labelHeight,
+      )) {
+        const label = labelNodes.get(position.id);
+        if (!label) continue;
+        label.style.width = `${position.width}px`;
+        label.style.left = `${position.labelX}px`;
+        label.style.top = `${position.labelY}px`;
+        label.style.visibility = "visible";
+      }
+    };
+
     const energy = { pulse: 0, shock: 0, reveal: 0 };
     let pointerX = 0;
     let contextAvailable = true;
     const loop = new VisualFrameLoop({ maxDeltaMs: 50 });
+    const failScene = () => {
+      contextAvailable = false;
+      loop.stop();
+      setSceneStatus("fallback");
+    };
     loop.subscribe(VISUAL_FRAME_PRIORITY.world, ({ deltaMs, elapsedMs }) => {
       const delta = deltaMs / 1_000;
       if (quality === "reduced") {
@@ -503,19 +611,20 @@ export default function LivingTableScene(props: {
         energy.reveal = 0;
       } else {
         energy.pulse = Math.max(0, energy.pulse - delta * 1.4);
-        energy.shock = Math.max(0, energy.shock - delta * 1.05);
+        energy.shock = Math.max(0, energy.shock - delta * 0.75);
         energy.reveal = Math.max(0, energy.reveal - delta * 0.7);
       }
       const elapsed = elapsedMs / 1_000;
       const motion = quality === "reduced" ? 0 : 1;
-      innerPlatform.rotation.y = Math.PI / 6 + elapsed * 0.12 * motion;
       table.rotation.y +=
         (pointerX * 0.035 * config.pointerInfluence - table.rotation.y) * 0.035;
-      const claimScale = 1 + Math.sin((1 - energy.pulse) * Math.PI) * 0.16;
-      claimGroup.scale.setScalar(claimScale);
-      claimGroup.position.y =
-        0.36 + Math.sin(elapsed * 0.85) * 0.035 * motion + energy.reveal * 0.12;
-      claimGroup.rotation.y = elapsed * 0.08 * motion;
+      poseClaim(
+        claimGroup,
+        camera,
+        elapsed,
+        energy.pulse,
+        quality === "reduced",
+      );
       seats.forEach((seat, index) => {
         seat.group.position.y =
           Number(seat.group.userData.baseY ?? 0.02) +
@@ -523,21 +632,44 @@ export default function LivingTableScene(props: {
         seat.ring.rotation.z =
           elapsed * (index % 2 === 0 ? 0.32 : -0.32) * motion;
       });
-      shockRing.scale.setScalar(1 + (1 - energy.shock) * 2.6);
-      shockMaterial.opacity = energy.shock * 0.62;
-      edgeMaterial.opacity = 0.62 + energy.pulse * 0.26 + energy.reveal * 0.12;
+      shockRing.scale.setScalar(1 + (1 - energy.shock) * 2.5);
+      shockMaterial.opacity = Math.sin(energy.shock * Math.PI) * 0.85;
+      edgeMaterial.opacity = 0.85 + energy.pulse * 0.15;
+      if (props.variant === "lobby") {
+        // Slow light travel follows the oval; seats and names keep their anchors.
+        const lightAngle = elapsed * 0.22 * motion;
+        cobaltLight.position.set(Math.cos(lightAngle) * 3.4, 3.2, Math.sin(lightAngle) * 2.4);
+        orangeLight.position.set(-Math.cos(lightAngle) * 3.4, 2.8, -Math.sin(lightAngle) * 2.4);
+        innerMaterial.opacity = 0.5 + Math.sin(elapsed * 0.65) * 0.12 * motion;
+      }
     });
     loop.subscribe(VISUAL_FRAME_PRIORITY.render, () => {
-      if (contextAvailable) renderer.render(scene, camera);
+      if (!contextAvailable) return;
+      try {
+        renderer.render(scene, camera);
+        updateLabels();
+      } catch {
+        failScene();
+      }
     });
 
     let renderedClaimSignature: string | undefined;
     const sync = (view: PrivateGameView) => {
-      syncSeats(seats, view, props.variant);
-      const nextClaimSignature = claimVisualSignature(view.currentClaim);
-      if (nextClaimSignature !== renderedClaimSignature) {
-        renderedClaimSignature = nextClaimSignature;
-        syncClaim(claimRig, view.currentClaim, config.textureAnisotropy);
+      try {
+        syncSeats(seats, view, props.variant);
+        labelNodes = new Map(
+          Array.from(
+            host.querySelectorAll<HTMLElement>("[data-seat-name]"),
+            (label) => [label.dataset.seatName!, label],
+          ),
+        );
+        const nextClaimSignature = claimVisualSignature(view.currentClaim);
+        if (nextClaimSignature !== renderedClaimSignature) {
+          syncClaim(claimRig, view.currentClaim, config.textureAnisotropy);
+          renderedClaimSignature = nextClaimSignature;
+        }
+      } catch {
+        failScene();
       }
     };
     syncRef.current = sync;
@@ -554,23 +686,28 @@ export default function LivingTableScene(props: {
     });
 
     const resize = () => {
-      const width = Math.max(1, host.clientWidth);
-      const height = Math.max(1, host.clientHeight);
-      const mobileLayout = compactViewport;
-      camera.aspect = width / height;
-      camera.position.y = mobileLayout
-        ? props.variant === "lobby"
-          ? 6.45
-          : 5.85
-        : props.variant === "lobby"
-          ? 5.9
-          : 5.25;
-      camera.position.z = mobileLayout ? 7.2 : 6.4;
-      camera.lookAt(0, 0, 0);
-      camera.updateProjectionMatrix();
-      renderer.setSize(width, height, false);
-      host.dataset.sceneLayout = mobileLayout ? "mobile" : "desktop";
-      renderOnce();
+      if (!contextAvailable) return;
+      try {
+        const width = Math.max(1, host.clientWidth);
+        const height = Math.max(1, host.clientHeight);
+        const projected = fitSceneCamera(
+          camera,
+          props.variant === "lobby" ? LOBBY_SCENE_BOUNDS : TABLE_SCENE_BOUNDS,
+          new THREE.Vector3(0, -0.35, 0),
+          new THREE.Vector3(0, props.variant === "lobby" ? 5.9 : 5.25, 6.4),
+          width,
+          height,
+        );
+        labelWidth = width;
+        labelHeight = height;
+        renderer.setSize(width, height, false);
+        host.dataset.sceneLayout = compactViewport ? "mobile" : "desktop";
+        host.dataset.sceneFraming = "contain";
+        host.dataset.sceneProjectedBounds = JSON.stringify(projected);
+        renderOnce();
+      } catch {
+        failScene();
+      }
     };
     const observer = new ResizeObserver(resize);
     observer.observe(host);
@@ -579,21 +716,22 @@ export default function LivingTableScene(props: {
       pointerX = (event.clientX / Math.max(window.innerWidth, 1) - 0.5) * 2;
     };
     const onVisibility = () => {
-      if (document.hidden || quality === "reduced") loop.stop();
+      if (!contextAvailable || document.hidden || quality === "reduced")
+        loop.stop();
       else loop.start();
       if (!document.hidden) renderOnce();
     };
     const onContextLost = (event: Event) => {
       event.preventDefault();
-      contextAvailable = false;
-      loop.stop();
-      setSceneStatus("fallback");
+      failScene();
     };
     const onContextRestored = () => {
       contextAvailable = true;
-      setSceneStatus("ready");
       resize();
-      if (quality !== "reduced" && !document.hidden) loop.start();
+      if (contextAvailable) {
+        setSceneStatus("ready");
+        if (quality !== "reduced" && !document.hidden) loop.start();
+      }
     };
     if (quality !== "reduced") {
       window.addEventListener("pointermove", onPointerMove, { passive: true });
@@ -607,9 +745,10 @@ export default function LivingTableScene(props: {
 
     sync(props.view);
     resize();
-    if (quality !== "reduced" && !document.hidden) loop.start();
+    if (contextAvailable && quality !== "reduced" && !document.hidden)
+      loop.start();
     setActiveQuality(quality);
-    setSceneStatus("ready");
+    if (contextAvailable) setSceneStatus("ready");
 
     return () => {
       syncRef.current = () => undefined;
@@ -630,6 +769,9 @@ export default function LivingTableScene(props: {
       clearClaimTextures(claimRig);
       claimCards.forEach((card) => card.material.dispose());
       claimGeometry.dispose();
+      lobbyCardGeometry.dispose();
+      lobbyCardTextures.forEach((texture) => texture.dispose());
+      lobbyCardMaterials.forEach((material) => material.dispose());
       seats.forEach((seat) => {
         seat.beacon.material.dispose();
         seat.ring.material.dispose();
@@ -642,7 +784,6 @@ export default function LivingTableScene(props: {
       innerMaterial.dispose();
       networkGeometry.dispose();
       networkMaterial.dispose();
-      edgeSourceGeometry.dispose();
       edgeGeometry.dispose();
       edgeMaterial.dispose();
       tableGeometry.dispose();
@@ -663,6 +804,21 @@ export default function LivingTableScene(props: {
       data-variant={props.variant}
       aria-hidden="true"
     >
+      {props.variant === "lobby" && sceneStatus !== "fallback" && (
+        <div className="lobby-table-names">
+          {props.view.players
+            .filter((player) => player.leftAt === undefined)
+            .map((player) => (
+              <span
+                key={player.id}
+                data-seat-name={player.id}
+                title={player.name}
+              >
+                {player.name}
+              </span>
+            ))}
+        </div>
+      )}
       {sceneStatus === "fallback" && (
         <div className="living-table-fallback" data-scene-fallback="true" />
       )}

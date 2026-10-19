@@ -34,7 +34,7 @@ async function expectCollisionFreeLobbySignals(page: Page): Promise<void> {
   const geometry = await page.locator(".lobby-orbit-zone").evaluate(() => {
     const candidates = Array.from(
       document.querySelectorAll<HTMLElement>(
-        ".lobby-orbit-avatar, .lobby-orbit-copy > *, .lobby-open-seat, .lobby-table-message > *",
+        ".lobby-orbit-avatar, .lobby-orbit-copy > *, .lobby-open-seat, .lobby-table-message > *, .lobby-table-names > span",
       ),
     )
       .map((element, index) => {
@@ -139,8 +139,10 @@ for (const viewport of viewports) {
     await page.waitForTimeout(500);
 
     const canvasBox = await canvas.boundingBox();
-    expect(canvasBox?.width).toBeGreaterThanOrEqual(viewport.width - 1);
-    expect(canvasBox?.height).toBeGreaterThanOrEqual(viewport.height - 1);
+    expect(canvasBox?.width).toBeGreaterThanOrEqual(200);
+    expect(canvasBox?.width).toBeLessThan(viewport.width);
+    expect(canvasBox?.height).toBeGreaterThanOrEqual(160);
+    expect(canvasBox?.height).toBeLessThan(viewport.height);
     const canvasPng = await canvas.screenshot();
     expect(canvasPng.byteLength).toBeGreaterThan(8_000);
 
@@ -170,7 +172,9 @@ for (const viewport of viewports) {
       expect(rail?.height).toBeLessThanOrEqual(viewport.height * 0.5);
       expect(rail?.height).toBeGreaterThanOrEqual(240);
     } else {
-      expect(rail?.height).toBe(viewport.height);
+      expect(rail!.height).toBeGreaterThanOrEqual(240);
+      expect(rail!.height).toBeLessThan(viewport.height - 48);
+      expect(rail!.y).toBeGreaterThan(0);
     }
     await page.screenshot({
       path: `test-results/v2-deal-rail-${viewport.name}.png`,
@@ -317,7 +321,7 @@ test("an active leaver leaves the rail without changing the frozen round pool", 
     );
     await expect(cardTotal).toHaveText("3");
     await expect(cardTotal).toHaveAttribute("title", "3 cards in play");
-    await expect(hostPage.getByText(/round 1/i)).toBeVisible();
+    await expect(hostPage.getByText("Round 1", { exact: true })).toBeVisible();
     await expect(
       hostPage.getByRole("button", { name: "Make Claim" }),
     ).toBeEnabled();
@@ -343,7 +347,9 @@ test("mobile room lifecycle and V3 controls work together", async ({
   const lobbyScenePng = await lobbyScene.locator("canvas").screenshot();
   expect(lobbyScenePng.byteLength).toBeGreaterThan(3_000);
   await expect(page.locator(".lobby-roster-row")).toHaveCount(1);
-  await expect(page.getByRole("button", { name: "Share room" })).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Invite friends" }),
+  ).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Table settings" }),
   ).toBeVisible();
@@ -365,7 +371,7 @@ test("mobile room lifecycle and V3 controls work together", async ({
   await expect(page.getByRole("button", { name: "Start" })).toBeEnabled();
   await page.getByRole("button", { name: "Start" }).click();
 
-  await expect(page.getByText(/round 1/i)).toBeVisible();
+  await expect(page.getByText("Round 1", { exact: true })).toBeVisible();
   await expect(page.getByText(/^your cards$/i)).toBeVisible();
   const gameScene = page.locator('.living-table-scene[data-variant="game"]');
   await expect(gameScene).toHaveAttribute("data-scene-status", "ready");
@@ -417,6 +423,11 @@ test("mobile room lifecycle and V3 controls work together", async ({
   await page.screenshot({ path: "test-results/v2-claim-mobile.png" });
   await page.getByRole("button", { name: "Royal Flush", exact: true }).click();
   await page.locator(".claim-options button").first().click();
+  await expect(
+    page.getByRole("button", { name: "Last Round", exact: true }),
+  ).toBeEnabled();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await page.getByRole("button", { name: "Last Round", exact: true }).click();
   await expect(page.getByText("Truth Reveal", { exact: true })).toBeVisible({
     timeout: 8_000,
   });
@@ -588,7 +599,7 @@ test("laptop table uses one continuous game arena", async ({ page }) => {
         document.documentElement.scrollWidth -
         document.documentElement.clientWidth,
     }));
-  expect(lobbyLayout.columns).toBe(2);
+  expect(lobbyLayout.columns).toBe(3);
   expect(lobbyLayout.overflow).toBe(0);
   await page.screenshot({
     path: "test-results/v2-lobby-laptop.png",
@@ -765,7 +776,10 @@ test("ten-seat mobile table and full reveal remain reachable", async ({
         .getByText(`Bot ${botNumber}`, { exact: true }),
     ).toBeVisible();
   }
-  await expect(page.locator(".bluff-lobby.crowded")).toBeVisible();
+  await expect(page.locator(".bluff-lobby")).toHaveAttribute(
+    "data-player-count",
+    "10",
+  );
   await expect(page.locator(".lobby-orbit-seat")).toHaveCount(10);
   await expect(page.locator(".lobby-roster-row")).toHaveCount(10);
   const crowdedLobby = await page.evaluate(() => ({
@@ -800,6 +814,11 @@ test("ten-seat mobile table and full reveal remain reachable", async ({
   await page.getByRole("button", { name: "Make Claim" }).click();
   await page.getByRole("button", { name: "Royal Flush", exact: true }).click();
   await page.locator(".claim-options button").first().click();
+  await expect(
+    page.getByRole("button", { name: "Last Round", exact: true }),
+  ).toBeEnabled();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await page.getByRole("button", { name: "Last Round", exact: true }).click();
   await expect(page.getByText("Truth Reveal", { exact: true })).toBeVisible({
     timeout: 8_000,
   });
