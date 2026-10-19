@@ -30,4 +30,4 @@ PLAYWRIGHT_BASE_URL=http://127.0.0.1:8787 npm run test:ui
 
 `wrangler.toml` targets `bullshit-poker`, with `APP_VERSION=2.0.0`, `RoomDurableObjectV2` and the existing namespace-swap migration history. This Git update did not deploy or modify the live Worker.
 
-The saved V2 backend passes the local tests, but its deployed bundle could not be compared because Cloudflare deployment-history access was unauthenticated. Do not interpret the frontend hash match as a verified server-bundle match.
+Authenticated Cloudflare verification also confirms the server bundle matches active version `364f19c8-a5cc-44d0-a20c-90b05c230f45`, apart from five generated dependency-path comments caused by the local test setup. All other bytes are identical. See [server verification hashes](PRODUCTION_SERVER_VERIFICATION.json).

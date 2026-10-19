@@ -1,0 +1,10 @@
+{
+  "verified_on": "2026-10-18 America/Los_Angeles",
+  "worker": "bullshit-poker",
+  "active_version": "364f19c8-a5cc-44d0-a20c-90b05c230f45",
+  "live_sha256": "e9f6e2f2aa261aa33ca8cb5243241b77a2c0cb5008aff8f25714ccf0eb05298d",
+  "local_raw_sha256": "4b870a697e893d8aed2f403026d60c1f5576c7c4c37fe9c8e368cf8dccb2addf",
+  "normalized_local_sha256": "e9f6e2f2aa261aa33ca8cb5243241b77a2c0cb5008aff8f25714ccf0eb05298d",
+  "matches": true,
+  "normalization": "Five generated dependency-path comments differ because the local build uses a node_modules symlink. Only their filesystem path prefix was normalized. All other bundle bytes are identical."
+}
